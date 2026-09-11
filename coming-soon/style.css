@@ -1,0 +1,182 @@
+/* In a Pinch A/V — coming-soon page
+   Brand palette pulled from the lobster-claw logo: warm orange/red on
+   cream/peach backgrounds. Modern sans-serif (Inter). Single-page layout. */
+
+:root {
+  --bg-cream:    #fdf6ed;
+  --bg-peach:    #fce6cc;
+  --logo-orange: #d97244;   /* mid-tone of the logo's body */
+  --logo-deep:   #b04a26;   /* darker shade for accents */
+  --text-dark:   #2a1810;   /* warm near-black, complements the orange */
+  --text-muted:  #6b4a3a;
+  --card-bg:     rgba(255, 255, 255, 0.65);
+  --shadow-soft: 0 10px 30px rgba(176, 74, 38, 0.12);
+  --transition:  0.2s ease;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 16px;
+  color: var(--text-dark);
+  background: linear-gradient(135deg, var(--bg-cream) 0%, var(--bg-peach) 100%);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* ── Hero ─────────────────────────────────────────────────────────── */
+.hero {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 1.5rem 2rem;
+}
+
+.hero-content {
+  max-width: 720px;
+  width: 100%;
+  text-align: center;
+}
+
+.logo {
+  width: 180px;
+  height: 180px;
+  object-fit: contain;
+  margin-bottom: 1.5rem;
+  filter: drop-shadow(0 4px 12px rgba(176, 74, 38, 0.18));
+}
+
+.eyebrow {
+  display: inline-block;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--logo-deep);
+  margin-bottom: 1rem;
+  padding: 0.4rem 1rem;
+  background: var(--card-bg);
+  border-radius: 999px;
+  border: 1px solid rgba(176, 74, 38, 0.15);
+}
+
+h1 {
+  font-size: clamp(1.75rem, 4.5vw, 2.75rem);
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  margin-bottom: 1.25rem;
+}
+
+.lead {
+  font-size: clamp(1rem, 2vw, 1.15rem);
+  line-height: 1.6;
+  color: var(--text-muted);
+  max-width: 560px;
+  margin: 0 auto 2.5rem;
+}
+
+.lead strong {
+  color: var(--text-dark);
+  font-weight: 600;
+}
+
+/* ── Categories ──────────────────────────────────────────────────── */
+.categories {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.75rem;
+  max-width: 520px;
+  margin: 0 auto 2.5rem;
+}
+
+.category {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1rem 0.5rem;
+  background: var(--card-bg);
+  border-radius: 12px;
+  border: 1px solid rgba(176, 74, 38, 0.08);
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-dark);
+  transition: var(--transition);
+}
+
+.category:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-soft);
+  border-color: rgba(176, 74, 38, 0.2);
+}
+
+.category-icon {
+  font-size: 1.75rem;
+  line-height: 1;
+}
+
+@media (max-width: 480px) {
+  .categories { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ── CTA ─────────────────────────────────────────────────────────── */
+.cta {
+  margin-top: 1rem;
+}
+
+.cta-text {
+  font-size: 1rem;
+  color: var(--text-muted);
+  margin-bottom: 1rem;
+}
+
+.btn {
+  display: inline-block;
+  padding: 0.85rem 1.75rem;
+  border-radius: 10px;
+  font-weight: 600;
+  font-size: 1rem;
+  text-decoration: none;
+  transition: var(--transition);
+  border: none;
+  cursor: pointer;
+}
+
+.btn-primary {
+  background: var(--logo-orange);
+  color: white;
+  box-shadow: 0 4px 14px rgba(217, 114, 68, 0.35);
+}
+
+.btn-primary:hover {
+  background: var(--logo-deep);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(176, 74, 38, 0.4);
+}
+
+/* ── Footer ──────────────────────────────────────────────────────── */
+.site-footer {
+  text-align: center;
+  padding: 1.5rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  border-top: 1px solid rgba(176, 74, 38, 0.08);
+}
+
+/* ── Mobile polish ───────────────────────────────────────────────── */
+@media (max-width: 600px) {
+  .hero { padding: 2rem 1rem 1.5rem; }
+  .logo { width: 140px; height: 140px; margin-bottom: 1rem; }
+  .lead { margin-bottom: 2rem; }
+  .categories { margin-bottom: 2rem; }
+}

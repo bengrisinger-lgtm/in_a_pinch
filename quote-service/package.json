@@ -1,0 +1,22 @@
+{
+  "name": "quote-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Tenant quote store. HMAC + tenant schema. Not a platform core service.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@securedbackend/sdk": "file:../../../symlfy-baas/syml-platform/client-sdk",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "helmet": "^7.1.0",
+    "pg": "^8.11.5"
+  }
+}

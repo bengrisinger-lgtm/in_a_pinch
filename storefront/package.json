@@ -1,0 +1,28 @@
+{
+  "name": "iap-storefront",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "IAP staff storefront: catalog, dates, calendar, cart holds. Tenant app, not console-service.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@securedbackend/sdk": "file:../../../symlfy-baas/syml-platform/client-sdk",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.7.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5"
+  }
+}
