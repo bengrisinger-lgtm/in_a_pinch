@@ -1,7 +1,12 @@
-import { PlatformError } from '@securedbackend/sdk';
+import { PlatformError, type SignTemplate } from '@securedbackend/sdk';
 import { kit } from './kit';
 
 const READY = new Set(['materialized']);
+const SIG_TYPES = new Set(['signature', 'initials']);
+const SENDER_FILL = new Set(['sender_text', 'sender_dropdown']);
+
+export const PLACE_TEMPLATE_BLOCKS =
+  'Place the renter signature in the tenant console under Signatures → Templates. Checkout cannot guess a corner of the page.';
 
 export type ReadyPdf = {
   id: string;
@@ -71,6 +76,23 @@ export async function uploadAgreementPdf(
   throw new Error('Scan timed out. Try the PDF again, or pick one already in Documents.');
 }
 
+export function renterSignerRole(template: SignTemplate): string | null {
+  const roles = Array.isArray(template.signer_roles) ? template.signer_roles : [];
+  const signerRoles = roles.filter((r) => !r.recipient_role || r.recipient_role === 'signer');
+  if (roles.length !== 1 || signerRoles.length !== 1) return null;
+  const label = signerRoles[0]?.role_label?.trim();
+  return label || null;
+}
+
+export function templateIsReadyForCheckout(template: SignTemplate): boolean {
+  if (!template?.id) return false;
+  if (!renterSignerRole(template)) return false;
+  const blocks = Array.isArray(template.blocks) ? template.blocks : [];
+  if (!blocks.some((b) => SIG_TYPES.has(b.type))) return false;
+  if (blocks.some((b) => SENDER_FILL.has(b.type))) return false;
+  return true;
+}
+
 export type SentAgreement = {
   envelopeId: string;
   documentId: string;
@@ -80,20 +102,30 @@ export type SentAgreement = {
 };
 
 export async function sendServiceAgreement(input: {
-  documentId: string;
+  templateId: string;
+  documentId?: string;
   signerName: string;
   signerEmail: string;
-  quoteId: string;
 }): Promise<SentAgreement> {
   const client = kit();
-  const created = await client.signing.create({
-    document_id: input.documentId,
-    document_hash: await hashDocumentId(input.documentId),
+  const { template } = await client.signing.getTemplate(input.templateId);
+  if (!templateIsReadyForCheckout(template)) {
+    throw new Error(PLACE_TEMPLATE_BLOCKS);
+  }
+  const roleLabel = renterSignerRole(template);
+  if (!roleLabel) {
+    throw new Error(PLACE_TEMPLATE_BLOCKS);
+  }
+  const documentId = template.document_id || input.documentId;
+  if (!documentId) {
+    throw new Error('This template has no PDF. Choose or upload the agreement PDF.');
+  }
+
+  const created = await client.signing.applyTemplate(template.id, {
+    document_id: documentId,
+    document_hash: await hashDocumentId(documentId),
     subject: 'Service agreement',
-    source_service: 'quotes',
-    source_entity_id: input.quoteId,
-    signers: [{ name: input.signerName, email: input.signerEmail, role_label: 'Renter' }],
-    blocks: [{ signer_index: 0, page: 1, x: 72, y: 640, width: 180, height: 40 }],
+    signers: [{ name: input.signerName, email: input.signerEmail, role_label: roleLabel }],
   });
   const sent = await client.signing.send(created.envelope.id);
   const signer = sent.signers[0];
@@ -102,9 +134,16 @@ export async function sendServiceAgreement(input: {
   }
   return {
     envelopeId: created.envelope.id,
-    documentId: input.documentId,
+    documentId,
     signingUrl: client.signing.signingUrl(signer.signing_url_token),
     inviteSent: signer.invite_sent,
     inviteFailure: signer.invite_failure_reason,
   };
 }
+
+export async function listAgreementTemplates(): Promise<SignTemplate[]> {
+  const page = await kit().signing.listTemplates();
+  return page.templates || [];
+}
+
+export type { SignTemplate };

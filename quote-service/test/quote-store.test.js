@@ -299,6 +299,7 @@ describe('ensureQuoteTables', () => {
     }
     assert.match(sql, /UNIQUE \(tenant_id, sku_id, serial_number\)/);
     assert.match(sql, /held_until TIMESTAMPTZ/);
+    assert.match(sql, /calendar_event_id TEXT/);
     assert.match(sql, /tenant_id UUID NOT NULL/);
     assert.doesNotMatch(sql, /quote_access_tokens/);
   });
@@ -326,6 +327,7 @@ describe('auth and source pins', () => {
     const routes = fs.readFileSync(path.join(__dirname, '../src/routes.js'), 'utf8');
     assert.match(routes, /payment-link/);
     assert.match(routes, /router\.patch\('\/:id'/);
+    assert.match(routes, /calendar_event_id|pushPaidBooking/);
     assert.doesNotMatch(routes, /localStorage|jsonwebtoken|COOKIE_SECRET|TOKEN_ENCRYPTION_KEY/);
     assert.doesNotMatch(idx, /TOKEN_ENCRYPTION_KEY/);
   });

@@ -39,6 +39,15 @@ function makePool({ quoteStatus = 'draft', holdStatus = 'held', heldUntil = '209
             status: quoteStatus,
             total: 50,
             email: 'alex@example.com',
+            starts_on: '2026-09-12',
+            ends_on: '2026-09-13',
+            fulfillment: 'pickup',
+            delivery_address: null,
+            event_type: 'Wedding',
+            notes: null,
+            created_by: USER_A,
+            calendar_event_id: null,
+            customer_name: 'Alex',
           },
         ],
       };
@@ -92,11 +101,12 @@ function makePool({ quoteStatus = 'draft', holdStatus = 'held', heldUntil = '209
   };
 }
 
-function listen(pool, square) {
+function listen(pool, square, calendar) {
   const app = createApp({
     pool,
     allowedOrigins: ['https://hub.example.com'],
     square,
+    calendar,
     verify: () => ({
       tenantId: TENANT_A,
       userId: USER_A,
@@ -168,6 +178,8 @@ describe('POST /api/v1/quotes/:id/payments mark-paid', () => {
     assert.equal(res.status, 201);
     const body = await res.json();
     assert.equal(body.quote.status, 'paid');
+    assert.equal(body.calendar.pushed, false);
+    assert.equal(body.calendar.reason, 'not_configured');
     assert.equal(Number(body.payment.amount), 50);
     assert.ok(
       pool.calls.some(
@@ -186,6 +198,51 @@ describe('POST /api/v1/quotes/:id/payments mark-paid', () => {
       body: JSON.stringify({}),
     });
     assert.equal(res.status, 409);
+    await new Promise((r) => server.close(r));
+  });
+
+  it('keeps the quote paid when the calendar copy fails', async () => {
+    const pool = makePool();
+    const { server, url } = await listen(pool, undefined, {
+      async pushPaidBooking() {
+        throw new Error('graph down');
+      },
+    });
+    const res = await fetch(`${url}/api/v1/quotes/${QUOTE_ID}/payments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ method: 'staff_recorded' }),
+    });
+    assert.equal(res.status, 201);
+    const body = await res.json();
+    assert.equal(body.quote.status, 'paid');
+    assert.equal(body.calendar.pushed, false);
+    await new Promise((r) => server.close(r));
+  });
+
+  it('copies the paid booking onto the connected calendar after pay', async () => {
+    const pool = makePool();
+    const pushed = [];
+    const { server, url } = await listen(pool, undefined, {
+      async pushPaidBooking(input) {
+        pushed.push(input);
+        return { pushed: true, provider: 'outlook', eventId: 'evt-99' };
+      },
+    });
+    const res = await fetch(`${url}/api/v1/quotes/${QUOTE_ID}/payments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ method: 'staff_recorded' }),
+    });
+    assert.equal(res.status, 201);
+    const body = await res.json();
+    assert.equal(body.quote.status, 'paid');
+    assert.equal(body.calendar.pushed, true);
+    assert.equal(body.calendar.provider, 'outlook');
+    assert.equal(pushed[0].tenantId, TENANT_A);
+    assert.ok(
+      pool.calls.some((c) => c.sql.includes('calendar_event_id') && c.sql.startsWith('UPDATE'))
+    );
     await new Promise((r) => server.close(r));
   });
 });

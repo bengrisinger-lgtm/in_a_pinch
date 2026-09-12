@@ -6,8 +6,10 @@ Postgres. PDFs and signatures stay in the kit (`document_id`, `envelope_id`
 on the quote). This service does **not** live in console-service.
 
 A checkout **hold** lasts **two hours**, then it stops blocking that serial.
-Confirmed (paid) reservations do not expire. Pushing a paid booking onto
-Cadel’s Outlook/Google calendar is a later one-way automation, not this table.
+Confirmed (paid) reservations do not expire. After **paid**, pinch-service
+asks integrations-service (OIDC) to copy the booking onto the connected
+calendar (Outlook first if both are linked). IAP serial stock stays the
+source of truth. A calendar failure does **not** un-pay.
 
 ## Auth
 
@@ -54,6 +56,10 @@ If you are not using `deploy.ps1`: `POST /auth/services` as a non-core spoke.
 | `ALLOWED_ORIGINS` | Staff frontend origins (comma-separated). No `*` |
 | `TENANT_ID` | Optional lock: HMAC tenant must match |
 | `CONSOLE_SERVICE_URL` | Cloud Run URL of console-service. Spoke mints OIDC and `GET /internal/tenant-credentials/:tenantId/square`. Do **not** mount `TOKEN_ENCRYPTION_KEY` here |
+| `INTEGRATIONS_SERVICE_URL` | Cloud Run URL of integrations-service. Spoke mints OIDC and `POST /internal/calendar/events` after pay. Do **not** mount `TOKEN_ENCRYPTION_KEY` or `COOKIE_SECRET` here |
+| `CALENDAR_TIMEZONE` | Default `America/Denver`. All-day events on the connected calendar |
+| `CALENDAR_PROJECT_ID` | Tenant-console project UUID that holds Gmail/Outlook tokens. Required when hub HMAC has no `projectId` (tokens are FORCE-RLS on `project_id`) |
+| `CALENDAR_USER_ID` | Optional. Calendar owner’s user UUID. Else quote `created_by`, else any connected user in that project |
 | `SQUARE_ACCESS_TOKEN` | Optional local/test fallback only. Production reads Credentials (`provider` slug `square`) |
 | `SQUARE_LOCATION_ID` | Optional. Else the first active Square location |
 | `SQUARE_API_BASE` | Default `https://connect.squareup.com` |
@@ -68,7 +74,7 @@ Prefix `/api/v1/quotes`:
 - `PATCH /:id` — store kit `document_id` / `envelope_id` (UUIDs only). HMAC tenant in `WHERE`. Ignores body `tenant_id`. Does not persist signing tokens.
 - `POST /checkout` — staff: renter + pickup/delivery + attach holds. Delivery fee is four legs × $0.66/mi + $30/hr from one-way miles/minutes (Maps later). Ignores client `delivery_fee`. Does not confirm holds until paid. `renter_magic_link` is null until renter self-signup.
 - `POST /:id/payment-link` — Square Payment Link from **server** quote total. Redirects the renter/staff to Square. No PAN. Needs vaulted `square` credential (console-service reveal) after console-service is redeployed with `CONSOLE_CREDENTIAL_REVEAL_ALLOWLIST`.
-- `POST /:id/payments` — staff mark-paid (default). Confirms attached holds and sets quote `paid`. Webhooks are later (V11-011). Do not un-pay if a later calendar push fails.
+- `POST /:id/payments` — staff mark-paid (default). Confirms attached holds and sets quote `paid`, then one-way copies the booking onto the connected calendar. Response includes `calendar: { pushed, reason?, provider?, eventId? }`. Webhooks are later (V11-011). Calendar failure does **not** un-pay.
 
 Inventory (prefix `/api/v1/quotes/inventory`):
 

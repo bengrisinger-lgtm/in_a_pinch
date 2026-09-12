@@ -8,6 +8,7 @@ import pg from 'pg';
 import { createServerClient } from '@securedbackend/sdk/server';
 import { createApp } from './src/app.js';
 import { createSquareRuntime } from './src/square.js';
+import { createCalendarRuntime } from './src/calendar.js';
 
 const REQUIRED = ['HMAC_SECRET', 'DB_HOST', 'DB_USER', 'DB_PASSWORD', 'DB_NAME'];
 for (const key of REQUIRED) {
@@ -54,6 +55,12 @@ const app = createApp({
     envAccessToken: process.env.SQUARE_ACCESS_TOKEN,
     envLocationId: process.env.SQUARE_LOCATION_ID,
     apiBase: process.env.SQUARE_API_BASE || 'https://connect.squareup.com',
+  }),
+  calendar: createCalendarRuntime({
+    integrationsServiceUrl: process.env.INTEGRATIONS_SERVICE_URL,
+    calendarUserId: process.env.CALENDAR_USER_ID,
+    calendarProjectId: process.env.CALENDAR_PROJECT_ID,
+    timeZone: process.env.CALENDAR_TIMEZONE || 'America/Denver',
   }),
 });
 

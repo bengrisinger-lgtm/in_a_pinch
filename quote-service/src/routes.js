@@ -2,8 +2,8 @@ import { Router } from 'express';
 import { ensureQuoteTables } from './schema.js';
 import { wrapWithTenant, withTenantTransaction } from './pool.js';
 import { deliveryFeeFromOneWay } from './delivery.js';
-import { dollarsToCents } from './square.js';
 import { applyPaidQuote } from './paid.js';
+import { dollarsToCents } from './square.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const UUID_RE =
@@ -592,9 +592,58 @@ export function quoteRoutes(ctx) {
             recordedBy: req.identity.userId,
           });
         });
+        let calendar = { pushed: false, reason: 'not_configured' };
+        if (typeof ctx.calendar?.pushPaidBooking === 'function') {
+          try {
+            const { db } = await scoped(req);
+            const found = await db.query(
+              `SELECT q.id, q.status, q.total, q.starts_on::text AS starts_on, q.ends_on::text AS ends_on,
+                      q.fulfillment, q.delivery_address, q.event_type, q.notes, q.created_by,
+                      q.calendar_event_id, q.calendar_provider, c.name AS customer_name, c.email
+                 FROM ${schemaName}.quotes q
+                 JOIN ${schemaName}.customers c
+                   ON c.id = q.customer_id AND c.tenant_id = q.tenant_id
+                WHERE q.id = $1 AND q.tenant_id = $2`,
+              [req.params.id, tenantId]
+            );
+            const row = found.rows[0];
+            if (row) {
+              calendar = await ctx.calendar.pushPaidBooking({
+                tenantId,
+                projectId: req.identity?.projectId || null,
+                userId: row.created_by || req.identity?.userId,
+                quote: row,
+              });
+            } else {
+              calendar = { pushed: false, reason: 'quote_missing' };
+            }
+            await db.query(
+              `UPDATE ${schemaName}.quotes
+                  SET calendar_event_id = COALESCE($3, calendar_event_id),
+                      calendar_provider = COALESCE($4, calendar_provider),
+                      calendar_push_status = $5,
+                      calendar_push_error = $6,
+                      calendar_pushed_at = CASE WHEN $5 = 'pushed' THEN now() ELSE calendar_pushed_at END,
+                      updated_at = now()
+                WHERE id = $1 AND tenant_id = $2`,
+              [
+                req.params.id,
+                tenantId,
+                calendar.pushed ? calendar.eventId : null,
+                calendar.pushed ? calendar.provider : null,
+                calendar.pushed ? 'pushed' : 'failed',
+                calendar.pushed ? null : calendar.reason || 'push_failed',
+              ]
+            );
+          } catch (calErr) {
+            req.log?.error?.({ err: calErr }, 'calendar push after paid failed');
+            calendar = { pushed: false, reason: 'push_failed' };
+          }
+        }
         return res.status(result.alreadyPaid ? 200 : 201).json({
           payment: result.payment,
           quote: result.quote,
+          calendar,
           schema: schemaName,
         });
       }

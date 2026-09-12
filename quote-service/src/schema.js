@@ -66,6 +66,11 @@ const TABLES = [
       subtotal NUMERIC NOT NULL DEFAULT 0,
       total NUMERIC NOT NULL DEFAULT 0,
       created_by UUID,
+      calendar_event_id TEXT,
+      calendar_provider TEXT,
+      calendar_push_status TEXT,
+      calendar_push_error TEXT,
+      calendar_pushed_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     `,
@@ -183,6 +188,11 @@ export async function ensureQuoteTables(db, tenantId) {
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS event_type TEXT`);
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS starts_on DATE`);
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS ends_on DATE`);
+  await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS calendar_event_id TEXT`);
+  await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS calendar_provider TEXT`);
+  await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS calendar_push_status TEXT`);
+  await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS calendar_push_error TEXT`);
+  await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS calendar_pushed_at TIMESTAMPTZ`);
   return { schema, tables: TABLES.map((t) => t.name) };
 }
 

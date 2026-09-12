@@ -2,7 +2,14 @@ import { useMemo, useState } from 'react';
 import type { CartLine } from '../pages/CatalogPage';
 import { formatUsd } from '../lib/dates';
 import { deliveryFeeFromOneWay } from '../lib/delivery';
-import { checkout, createPaymentLink, markPaid, attachEnvelope, type CheckoutQuote } from '../lib/quoteApi';
+import {
+  checkout,
+  createPaymentLink,
+  markPaid,
+  attachEnvelope,
+  type CalendarPush,
+  type CheckoutQuote,
+} from '../lib/quoteApi';
 import AgreementPanel from './AgreementPanel';
 import type { SentAgreement } from '../lib/agreement';
 
@@ -41,6 +48,7 @@ export default function CartDrawer({ cart, startsOn, endsOn, nights, onClose, on
   const [paid, setPaid] = useState(false);
   const [paying, setPaying] = useState(false);
   const [agreement, setAgreement] = useState<SentAgreement | null>(null);
+  const [calendar, setCalendar] = useState<CalendarPush | null>(null);
 
   const subtotal = cart.reduce((sum, line) => sum + line.dailyRate * line.quantity * nights, 0);
   const ttl = cart.find((l) => l.heldUntil)?.heldUntil;
@@ -102,8 +110,9 @@ export default function CartDrawer({ cart, startsOn, endsOn, nights, onClose, on
     setPaying(true);
     setError(null);
     try {
-      await markPaid(saved.id);
+      const body = await markPaid(saved.id);
       setPaid(true);
+      setCalendar(body.calendar ?? { pushed: false, reason: 'not_configured' });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not mark paid');
     } finally {
@@ -145,7 +154,6 @@ export default function CartDrawer({ cart, startsOn, endsOn, nights, onClose, on
 
         {saved && panel === 3 ? (
           <AgreementPanel
-            quoteId={saved.id}
             signerName={name.trim()}
             signerEmail={email.trim()}
             sending={saving}
@@ -166,7 +174,16 @@ export default function CartDrawer({ cart, startsOn, endsOn, nights, onClose, on
             {paid ? (
               <p>
                 <strong>Paid.</strong> Holds on those serials are confirmed and no longer expire.
-                Pushing this booking onto the connected calendar is the next playbook step.
+                {calendar?.pushed ? (
+                  <> Copied onto the connected calendar.</>
+                ) : (
+                  <>
+                    {' '}
+                    Calendar copy skipped
+                    {calendar?.reason ? ` (${calendar.reason})` : ''}. Connect Gmail or Outlook
+                    under Integrations if it should appear there — this booking stays paid.
+                  </>
+                )}
               </p>
             ) : (
               <p>

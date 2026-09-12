@@ -1,15 +1,18 @@
 import { useEffect, useState } from 'react';
 import {
   kitErrorMessage,
+  listAgreementTemplates,
   listReadyPdfs,
+  PLACE_TEMPLATE_BLOCKS,
   sendServiceAgreement,
+  templateIsReadyForCheckout,
   uploadAgreementPdf,
   type ReadyPdf,
   type SentAgreement,
+  type SignTemplate,
 } from '../lib/agreement';
 
 type Props = {
-  quoteId: string;
   signerName: string;
   signerEmail: string;
   sending: boolean;
@@ -22,7 +25,6 @@ type Props = {
 };
 
 export default function AgreementPanel({
-  quoteId,
   signerName,
   signerEmail,
   sending,
@@ -33,6 +35,8 @@ export default function AgreementPanel({
   onSent,
   onContinue,
 }: Props) {
+  const [templates, setTemplates] = useState<SignTemplate[]>([]);
+  const [templateId, setTemplateId] = useState('');
   const [docs, setDocs] = useState<ReadyPdf[]>([]);
   const [documentId, setDocumentId] = useState('');
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
@@ -41,11 +45,20 @@ export default function AgreementPanel({
 
   useEffect(() => {
     let cancelled = false;
-    listReadyPdfs()
-      .then((list) => {
+    Promise.all([listAgreementTemplates(), listReadyPdfs()])
+      .then(([tpls, pdfs]) => {
         if (cancelled) return;
-        setDocs(list);
-        if (list[0]) setDocumentId(list[0].id);
+        setTemplates(tpls);
+        setDocs(pdfs);
+        const ready = tpls.find(templateIsReadyForCheckout);
+        const pick = ready || tpls[0];
+        if (pick) {
+          setTemplateId(pick.id);
+          if (pick.document_id) setDocumentId(pick.document_id);
+          else if (pdfs[0]) setDocumentId(pdfs[0].id);
+        } else if (pdfs[0]) {
+          setDocumentId(pdfs[0].id);
+        }
       })
       .catch((err) => {
         if (!cancelled) setListError(kitErrorMessage(err));
@@ -54,6 +67,16 @@ export default function AgreementPanel({
       cancelled = true;
     };
   }, []);
+
+  const selected = templates.find((t) => t.id === templateId) || null;
+  const templateReady = selected ? templateIsReadyForCheckout(selected) : false;
+  const needsPdfPicker = Boolean(selected && !selected.document_id);
+
+  function onPickTemplate(id: string) {
+    setTemplateId(id);
+    const tpl = templates.find((t) => t.id === id);
+    if (tpl?.document_id) setDocumentId(tpl.document_id);
+  }
 
   async function handleFile(file: File) {
     onError(null);
@@ -76,18 +99,26 @@ export default function AgreementPanel({
 
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
-    if (!documentId) {
-      onError('Choose or upload the service-agreement PDF first.');
+    if (!templateId) {
+      onError(PLACE_TEMPLATE_BLOCKS);
+      return;
+    }
+    if (!templateReady) {
+      onError(PLACE_TEMPLATE_BLOCKS);
+      return;
+    }
+    if (needsPdfPicker && !documentId) {
+      onError('This template has no PDF. Choose or upload the agreement PDF.');
       return;
     }
     onError(null);
     onBusy(true);
     try {
       const result = await sendServiceAgreement({
-        documentId,
+        templateId,
+        documentId: needsPdfPicker ? documentId : undefined,
         signerName,
         signerEmail,
-        quoteId,
       });
       setCreated(result);
       await onSent(result);
@@ -117,8 +148,9 @@ export default function AgreementPanel({
     <div>
       <h3>Service agreement</h3>
       <p className="muted">
-        The renter signs on the kit signer app — not a typed name on this page. Bytes stay in
-        the vault. This quote only stores the envelope UUID.
+        The renter signs on the kit signer app — not a typed name on this page. Place the signature
+        once under Signatures → Templates in the tenant console. This quote only stores the envelope
+        UUID.
       </p>
       {shown ? (
         <div className="summary">
@@ -153,38 +185,62 @@ export default function AgreementPanel({
         <form onSubmit={handleSend}>
           <div className="fields">
             <div className="full">
-              <label htmlFor="agreement-pdf">Agreement PDF</label>
+              <label htmlFor="agreement-template">Agreement template</label>
               <select
-                id="agreement-pdf"
-                value={documentId}
-                onChange={(e) => setDocumentId(e.target.value)}
+                id="agreement-template"
+                value={templateId}
+                onChange={(e) => onPickTemplate(e.target.value)}
                 required
               >
-                {docs.length === 0 ? (
-                  <option value="">No ready PDFs — upload one below</option>
+                {templates.length === 0 ? (
+                  <option value="">No templates — place a signature in Signatures → Templates</option>
                 ) : (
-                  docs.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.filename}
+                  templates.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                      {templateIsReadyForCheckout(t) ? '' : ' (place signature blocks first)'}
                     </option>
                   ))
                 )}
               </select>
             </div>
-            <div className="full">
-              <label htmlFor="agreement-file">Or upload a PDF</label>
-              <input
-                id="agreement-file"
-                type="file"
-                accept="application/pdf,.pdf"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  e.target.value = '';
-                  if (file) void handleFile(file);
-                }}
-              />
-              {uploadStatus ? <p className="muted">{uploadStatus}</p> : null}
-            </div>
+            {needsPdfPicker ? (
+              <>
+                <div className="full">
+                  <label htmlFor="agreement-pdf">Agreement PDF</label>
+                  <select
+                    id="agreement-pdf"
+                    value={documentId}
+                    onChange={(e) => setDocumentId(e.target.value)}
+                    required
+                  >
+                    {docs.length === 0 ? (
+                      <option value="">No ready PDFs — upload one below</option>
+                    ) : (
+                      docs.map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.filename}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
+                <div className="full">
+                  <label htmlFor="agreement-file">Or upload a PDF</label>
+                  <input
+                    id="agreement-file"
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = '';
+                      if (file) void handleFile(file);
+                    }}
+                  />
+                  {uploadStatus ? <p className="muted">{uploadStatus}</p> : null}
+                </div>
+              </>
+            ) : null}
             <div>
               <label>Signer</label>
               <input value={signerName} readOnly />
@@ -196,9 +252,10 @@ export default function AgreementPanel({
           </div>
           {listError ? <p className="error">{listError}</p> : null}
           {error ? <p className="error">{error}</p> : null}
+          {!templateReady ? <p className="muted">{PLACE_TEMPLATE_BLOCKS}</p> : null}
           <div className="actions">
             <span />
-            <button type="submit" disabled={sending || !documentId}>
+            <button type="submit" disabled={sending || !templateReady}>
               {sending ? 'Sending…' : 'Send for signature'}
             </button>
           </div>

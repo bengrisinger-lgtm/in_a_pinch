@@ -1,6 +1,7 @@
 /**
  * Staff mark-paid (and later Square webhooks). Confirms attached holds.
- * Calendar push is playbook 11b — do not un-pay if that fails later.
+ * Calendar copy runs after this commit (playbook 11b). Do not un-pay
+ * if that push fails.
  */
 
 export async function applyPaidQuote(client, { schema, tenantId, quoteId, amount, method, externalId, recordedBy }) {

@@ -27,7 +27,15 @@ describe('IAP storefront contract', () => {
     assert.match(blob, /payment-link/);
     assert.match(blob, /Mark paid/);
     assert.match(blob, /client\.signing/);
+    assert.match(blob, /applyTemplate/);
     assert.match(blob, /envelope_id/);
+    assert.match(blob, /Integrations/);
+    assert.match(blob, /connected calendar/);
+    assert.match(blob, /Signatures/);
+    assert.match(blob, /Templates/);
+    assert.doesNotMatch(blob, /x:\s*72,\s*y:\s*640/);
+    assert.doesNotMatch(blob, /signer_index/);
+    assert.doesNotMatch(blob, /PdfBlockEditor/);
     assert.doesNotMatch(blob, /localStorage|sessionStorage|jsonwebtoken|COOKIE_SECRET/);
     assert.doesNotMatch(blob, /@securedbackend\/sdk\/server/);
     assert.doesNotMatch(blob, /placeholder=["']1234 5678|Name on card|id=["']signatureName["']/);

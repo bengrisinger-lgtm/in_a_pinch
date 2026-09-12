@@ -74,10 +74,18 @@ export function createPaymentLink(quoteId: string, redirectOrigin: string) {
   );
 }
 
+export type CalendarPush = {
+  pushed: boolean;
+  reason?: string;
+  provider?: string;
+  eventId?: string;
+};
+
 export function markPaid(quoteId: string) {
   return quoteFetch<{
     payment: { id: string; amount: number | string; status: string; method: string };
     quote: { id: string; status: string };
+    calendar?: CalendarPush;
   }>(`/${quoteId}/payments`, {
     method: 'POST',
     body: JSON.stringify({ method: 'staff_recorded' }),
