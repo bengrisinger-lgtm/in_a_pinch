@@ -59,7 +59,7 @@ function makePool() {
     }
     if (compact.includes('INSERT INTO') && compact.includes('.quotes') && !compact.includes('quote_line')) {
       const row = {
-        id: 'q0000000-0000-0000-0000-000000000001',
+        id: 'aaaaaaaa-0000-4000-8000-000000000001',
         customer_id: params[1],
         status: 'draft',
         notes: params[2],
@@ -80,6 +80,14 @@ function makePool() {
     }
     if (compact.includes('INSERT INTO') && compact.includes('quote_line_items')) {
       return { rows: [] };
+    }
+    if (compact.startsWith('UPDATE') && compact.includes('.quotes')) {
+      const list = quotes[schema] || [];
+      const hit = list.find((q) => q.id === params[0] && q.tenant_id === params[1]);
+      if (!hit) return { rows: [] };
+      if (params[2]) hit.document_id = params[2];
+      if (params[3]) hit.envelope_id = params[3];
+      return { rows: [{ ...hit }] };
     }
     if (compact.includes('FROM') && compact.includes('.quotes') && compact.includes('SELECT id FROM')) {
       const list = quotes[schema] || [];
@@ -223,6 +231,54 @@ describe('quote store HMAC scope', () => {
     assert.ok(qInsert.sql.includes('document_id'));
     assert.ok(qInsert.sql.includes('envelope_id'));
   });
+
+  it('stores kit envelope UUIDs on PATCH and ignores body.tenant_id', async () => {
+    const quoteId = 'aaaaaaaa-0000-4000-8000-000000000001';
+    const documentId = 'd0000000-0000-4000-8000-00000000000a';
+    const envelopeId = 'e0000000-0000-4000-8000-00000000000a';
+    const res = await fetch(`${urlA}/api/v1/quotes/${quoteId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tenant_id: TENANT_B,
+        document_id: documentId,
+        envelope_id: envelopeId,
+      }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.schema, SCHEMA_A);
+    assert.equal(body.quote.document_id, documentId);
+    assert.equal(body.quote.envelope_id, envelopeId);
+    const update = pool.calls.find((c) => c.sql.startsWith('UPDATE') && c.sql.includes('.quotes'));
+    assert.match(update.sql, new RegExp(`UPDATE ${SCHEMA_A}\\.quotes`));
+    assert.equal(update.params[0], quoteId);
+    assert.equal(update.params[1], TENANT_A);
+    assert.equal(update.params[2], documentId);
+    assert.equal(update.params[3], envelopeId);
+    assert.equal(update.params.includes(TENANT_B), false);
+  });
+
+  it('rejects PATCH without kit UUIDs', async () => {
+    const res = await fetch(`${urlA}/api/v1/quotes/aaaaaaaa-0000-4000-8000-000000000001`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenant_id: TENANT_A }),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it("does not attach another tenant's quote envelope", async () => {
+    const res = await fetch(`${urlB}/api/v1/quotes/aaaaaaaa-0000-4000-8000-000000000001`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        document_id: 'd0000000-0000-4000-8000-00000000000b',
+        envelope_id: 'e0000000-0000-4000-8000-00000000000b',
+      }),
+    });
+    assert.equal(res.status, 404);
+  });
 });
 
 describe('ensureQuoteTables', () => {
@@ -268,6 +324,9 @@ describe('auth and source pins', () => {
     assert.match(idx, /HMAC_SECRET/);
     assert.match(idx, /COOKIE_SECRET must not be mounted/);
     const routes = fs.readFileSync(path.join(__dirname, '../src/routes.js'), 'utf8');
-    assert.doesNotMatch(routes, /localStorage|jsonwebtoken|COOKIE_SECRET/);
+    assert.match(routes, /payment-link/);
+    assert.match(routes, /router\.patch\('\/:id'/);
+    assert.doesNotMatch(routes, /localStorage|jsonwebtoken|COOKIE_SECRET|TOKEN_ENCRYPTION_KEY/);
+    assert.doesNotMatch(idx, /TOKEN_ENCRYPTION_KEY/);
   });
 });

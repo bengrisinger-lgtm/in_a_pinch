@@ -167,8 +167,8 @@ export default function CatalogPage({ email, cart, setCart }: Props) {
         </div>
 
         <p className="banner">
-          Signed in as staff. Add-to-cart places a 2-hour hold on those serials. Checkout details,
-          kit agreement, and Square are the next slices — no card fields here.
+          Signed in as staff. Add-to-cart places a 2-hour hold on those serials. Checkout is details,
+          kit agreement on the signer app, then Square — no card fields here.
         </p>
         {error ? <p className="banner error">{error}</p> : null}
 

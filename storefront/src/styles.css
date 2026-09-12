@@ -345,6 +345,54 @@ footer p { color: #c9bbb2; font-size: 12px; }
   padding: 8px;
   cursor: pointer;
 }
+.fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 11px;
+}
+.full { grid-column: 1 / -1; }
+.fields label {
+  display: block;
+  font-size: 11px;
+  font-weight: 800;
+  margin: 5px 0;
+}
+.fields input, .fields select, .fields textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #fff;
+}
+.fields textarea { min-height: 72px; resize: vertical; }
+.delivery-card {
+  background: #fff6e7;
+  border: 1px solid #e8c79f;
+  border-radius: 10px;
+  padding: 14px;
+  margin-top: 12px;
+}
+.actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 18px;
+}
+.actions button {
+  border: 0;
+  border-radius: 8px;
+  padding: 11px 15px;
+  font-weight: 800;
+  cursor: pointer;
+  background: var(--night);
+  color: #fff;
+}
+.actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+.actions .back {
+  background: #fff;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
 .summary {
   background: #fff6e7;
   border: 1px solid #e8c79f;
@@ -364,6 +412,11 @@ footer p { color: #c9bbb2; font-size: 12px; }
   border-top: 1px solid #d8b995;
   padding-top: 10px;
   margin-top: 6px;
+}
+.drawer p.error {
+  color: var(--red);
+  font-size: 13px;
+  font-weight: 700;
 }
 .calendar-wrap {
   display: grid;

@@ -22,10 +22,17 @@ describe('IAP storefront contract', () => {
     const blob = files.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
     assert.match(blob, /createClient/);
     assert.match(blob, /credentials: 'include'/);
-    assert.match(blob, /\/api\/v1\/quotes\/inventory/);
+    assert.match(blob, /\/api\/v1\/quotes/);
+    assert.match(blob, /\/checkout/);
+    assert.match(blob, /payment-link/);
+    assert.match(blob, /Mark paid/);
+    assert.match(blob, /client\.signing/);
+    assert.match(blob, /envelope_id/);
     assert.doesNotMatch(blob, /localStorage|sessionStorage|jsonwebtoken|COOKIE_SECRET/);
     assert.doesNotMatch(blob, /@securedbackend\/sdk\/server/);
     assert.doesNotMatch(blob, /placeholder=["']1234 5678|Name on card|id=["']signatureName["']/);
+    assert.doesNotMatch(blob, /sq-card-number|Web Payments SDK|payments\.squareup/);
+    assert.doesNotMatch(blob, /<canvas|getContext\(['"]2d['"]\)/);
     assert.doesNotMatch(blob, /tenant_id:/);
   });
 });

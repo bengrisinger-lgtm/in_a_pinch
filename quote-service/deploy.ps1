@@ -196,14 +196,35 @@ gcloud secrets add-iam-policy-binding $HMAC_SECRET_NAME `
 # -----------------------------------------
 # env.yaml (no secrets)
 # -----------------------------------------
+$CONSOLE_SERVICE_URL = ""
+try {
+    $CONSOLE_SERVICE_URL = (gcloud run services describe console-service --project $PROJECT --region $REGION --format "value(status.url)" 2>$null).Trim()
+} catch {
+    $CONSOLE_SERVICE_URL = ""
+}
+
 $envYamlPath = Join-Path $staging "env.yaml"
+$consoleUrlLine = if ($CONSOLE_SERVICE_URL) { "CONSOLE_SERVICE_URL: `"$CONSOLE_SERVICE_URL`"" } else { "" }
 Write-Utf8NoBom $envYamlPath @"
 DB_USER: "$SQL_USER"
 DB_NAME: "$SQL_DATABASE"
 DB_HOST: "$SQL_CONNECTION_NAME"
 ALLOWED_ORIGINS: "$AllowedOrigins"
 TENANT_ID: "$TenantId"
+$consoleUrlLine
 "@
+
+if ($CONSOLE_SERVICE_URL) {
+    Write-Host "  CONSOLE_SERVICE_URL: $CONSOLE_SERVICE_URL (vault reveal for Square)" -ForegroundColor DarkGray
+    gcloud run services add-iam-policy-binding console-service `
+        --project $PROJECT `
+        --region $REGION `
+        --member "serviceAccount:$SERVICE_ACCOUNT" `
+        --role "roles/run.invoker" `
+        --quiet 2>$null
+} else {
+    Write-Host "  CONSOLE_SERVICE_URL unset — Payment Link needs console-service reveal or SQUARE_ACCESS_TOKEN" -ForegroundColor Yellow
+}
 
 # -----------------------------------------
 # Cloud Run

@@ -59,6 +59,10 @@ const TABLES = [
       delivery_miles NUMERIC,
       drive_minutes NUMERIC,
       delivery_fee NUMERIC NOT NULL DEFAULT 0,
+      fulfillment TEXT,
+      event_type TEXT,
+      starts_on DATE,
+      ends_on DATE,
       subtotal NUMERIC NOT NULL DEFAULT 0,
       total NUMERIC NOT NULL DEFAULT 0,
       created_by UUID,
@@ -173,6 +177,12 @@ export async function ensureQuoteTables(db, tenantId) {
   await db.query(
     `CREATE INDEX IF NOT EXISTS inventory_reservations_unit_idx ON ${schema}.inventory_reservations (unit_id, starts_on, ends_on)`
   );
+  // Existing IAP schemas were created before checkout columns. ADD IF NOT
+  // EXISTS is a no-op on a fresh CREATE TABLE that already has them.
+  await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS fulfillment TEXT`);
+  await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS event_type TEXT`);
+  await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS starts_on DATE`);
+  await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS ends_on DATE`);
   return { schema, tables: TABLES.map((t) => t.name) };
 }
 

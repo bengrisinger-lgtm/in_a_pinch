@@ -1,12 +1,26 @@
 import { Router } from 'express';
-import { schemaNameFromTenantId, ensureQuoteTables } from './schema.js';
-import { wrapWithTenant } from './pool.js';
+import { ensureQuoteTables } from './schema.js';
+import { wrapWithTenant, withTenantTransaction } from './pool.js';
+import { deliveryFeeFromOneWay } from './delivery.js';
+import { dollarsToCents } from './square.js';
+import { applyPaidQuote } from './paid.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TEXT_MAX = 2000;
 const NAME_MAX = 200;
 const EMAIL_MAX = 254;
 const PHONE_MAX = 40;
+const EVENT_TYPES = new Set([
+  'Wedding',
+  'Party',
+  'Corporate Event',
+  'Live Music',
+  'Community Event',
+  'Other',
+]);
+const FULFILLMENT = new Set(['pickup', 'delivery']);
 
 function hmacTenantId(req) {
   return req.identity?.tenantId || null;
@@ -25,6 +39,12 @@ function money(raw, fallback = 0) {
   const n = Number(raw);
   if (!Number.isFinite(n) || n < 0) return null;
   return n;
+}
+
+function spanDays(startsOn, endsOn) {
+  const a = Date.parse(`${startsOn}T00:00:00Z`);
+  const b = Date.parse(`${endsOn}T00:00:00Z`);
+  return Math.round((b - a) / 86400000) + 1;
 }
 
 export function quoteRoutes(ctx) {
@@ -64,6 +84,225 @@ export function quoteRoutes(ctx) {
     } catch (err) {
       req.log?.error?.({ err }, 'customer create failed');
       res.status(500).json({ error: 'Failed to create customer' });
+    }
+  });
+
+  router.post('/checkout', async (req, res) => {
+    const tenantId = hmacTenantId(req);
+    const name = clip(req.body?.name, NAME_MAX);
+    const email = clip(req.body?.email, EMAIL_MAX);
+    if (!name || !email || !EMAIL_RE.test(email)) {
+      return res.status(400).json({ error: 'name and email are required' });
+    }
+    const fulfillment = clip(req.body?.fulfillment, 32) || 'pickup';
+    if (!FULFILLMENT.has(fulfillment)) {
+      return res.status(400).json({ error: 'fulfillment must be pickup or delivery' });
+    }
+    const eventType = clip(req.body?.event_type, NAME_MAX);
+    if (eventType && !EVENT_TYPES.has(eventType)) {
+      return res.status(400).json({ error: 'event_type is not a known value' });
+    }
+    const holdIds = Array.isArray(req.body?.hold_ids)
+      ? [...new Set(req.body.hold_ids.filter((id) => typeof id === 'string' && UUID_RE.test(id)))]
+      : [];
+    if (holdIds.length < 1) {
+      return res.status(400).json({ error: 'hold_ids are required' });
+    }
+
+    let deliveryAddress = null;
+    let deliveryMiles = 0;
+    let driveMinutes = 0;
+    let deliveryFee = 0;
+    if (fulfillment === 'delivery') {
+      deliveryAddress = clip(req.body?.delivery_address, TEXT_MAX);
+      if (!deliveryAddress) {
+        return res.status(400).json({ error: 'delivery_address is required for delivery' });
+      }
+      const miles = money(req.body?.one_way_miles, null);
+      const minutes = money(req.body?.one_way_minutes, null);
+      deliveryFee = deliveryFeeFromOneWay(miles, minutes);
+      if (deliveryFee == null) {
+        return res.status(400).json({
+          error: 'one_way_miles and one_way_minutes must be non-negative numbers',
+        });
+      }
+      deliveryMiles = miles * 4;
+      driveMinutes = minutes * 4;
+    }
+
+    try {
+      const schemaName = (
+        await ensureQuoteTables(pool, tenantId)
+      ).schema;
+      const result = await withTenantTransaction(pool, tenantId, async (client) => {
+        const holds = await client.query(
+          `SELECT r.id, r.sku_id, r.unit_id, r.starts_on::text AS starts_on,
+                  r.ends_on::text AS ends_on, r.status, r.held_until,
+                  s.name AS sku_name, s.daily_rate, u.serial_number
+             FROM ${schemaName}.inventory_reservations r
+             JOIN ${schemaName}.inventory_skus s
+               ON s.id = r.sku_id AND s.tenant_id = r.tenant_id
+             JOIN ${schemaName}.inventory_units u
+               ON u.id = r.unit_id AND u.tenant_id = r.tenant_id
+            WHERE r.tenant_id = $1
+              AND r.id = ANY($2::uuid[])
+            FOR UPDATE OF r`,
+          [tenantId, holdIds]
+        );
+        if (holds.rows.length !== holdIds.length) {
+          const err = new Error('One or more holds were not found');
+          err.status = 409;
+          throw err;
+        }
+        const startsOn = holds.rows[0].starts_on;
+        const endsOn = holds.rows[0].ends_on;
+        for (const row of holds.rows) {
+          if (row.status !== 'held' || !row.held_until || new Date(row.held_until) <= new Date()) {
+            const err = new Error('A hold is expired or not active');
+            err.status = 409;
+            throw err;
+          }
+          if (row.starts_on !== startsOn || row.ends_on !== endsOn) {
+            const err = new Error('Holds must share the same rental dates');
+            err.status = 409;
+            throw err;
+          }
+        }
+
+        const existing = await client.query(
+          `SELECT id FROM ${schemaName}.customers
+            WHERE tenant_id = $1 AND lower(email) = $2
+            ORDER BY created_at ASC
+            LIMIT 1`,
+          [tenantId, email.toLowerCase()]
+        );
+        let customerId = existing.rows[0]?.id;
+        let customer;
+        if (customerId) {
+          const updated = await client.query(
+            `UPDATE ${schemaName}.customers
+                SET name = $3, phone = $4, site_address = $5, updated_at = now()
+              WHERE id = $1 AND tenant_id = $2
+            RETURNING id, name, email, phone, billing_address, site_address, user_id, created_at`,
+            [
+              customerId,
+              tenantId,
+              name,
+              clip(req.body?.phone, PHONE_MAX),
+              fulfillment === 'delivery' ? deliveryAddress : clip(req.body?.site_address, TEXT_MAX),
+            ]
+          );
+          customer = updated.rows[0];
+        } else {
+          const inserted = await client.query(
+            `INSERT INTO ${schemaName}.customers
+               (tenant_id, name, email, phone, billing_address, site_address)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             RETURNING id, name, email, phone, billing_address, site_address, user_id, created_at`,
+            [
+              tenantId,
+              name,
+              email.toLowerCase(),
+              clip(req.body?.phone, PHONE_MAX),
+              clip(req.body?.billing_address, TEXT_MAX),
+              fulfillment === 'delivery' ? deliveryAddress : clip(req.body?.site_address, TEXT_MAX),
+            ]
+          );
+          customer = inserted.rows[0];
+          customerId = customer.id;
+        }
+
+        const nights = spanDays(startsOn, endsOn);
+        const bySku = new Map();
+        for (const row of holds.rows) {
+          const cur = bySku.get(row.sku_id) || {
+            description: row.sku_name,
+            quantity: 0,
+            dailyRate: Number(row.daily_rate) || 0,
+          };
+          cur.quantity += 1;
+          bySku.set(row.sku_id, cur);
+        }
+        let subtotal = 0;
+        const lines = [];
+        let sort = 0;
+        for (const line of bySku.values()) {
+          const unitPrice = line.dailyRate * nights;
+          subtotal += unitPrice * line.quantity;
+          lines.push({
+            description: line.description,
+            quantity: line.quantity,
+            unitPrice,
+            sortOrder: sort,
+          });
+          sort += 1;
+        }
+        const total = subtotal + deliveryFee;
+
+        const quoteIns = await client.query(
+          `INSERT INTO ${schemaName}.quotes (
+             tenant_id, customer_id, notes, delivery_address, delivery_miles,
+             drive_minutes, delivery_fee, subtotal, total, created_by,
+             fulfillment, event_type, starts_on, ends_on
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::date,$14::date)
+           RETURNING id, customer_id, status, notes, document_id, envelope_id,
+                     delivery_address, delivery_miles, drive_minutes, delivery_fee,
+                     subtotal, total, fulfillment, event_type,
+                     starts_on::text AS starts_on, ends_on::text AS ends_on, created_at`,
+          [
+            tenantId,
+            customerId,
+            clip(req.body?.notes, TEXT_MAX),
+            deliveryAddress,
+            fulfillment === 'delivery' ? deliveryMiles : 0,
+            fulfillment === 'delivery' ? driveMinutes : 0,
+            deliveryFee,
+            subtotal,
+            total,
+            req.identity.userId,
+            fulfillment,
+            eventType,
+            startsOn,
+            endsOn,
+          ]
+        );
+        const quote = quoteIns.rows[0];
+        for (const line of lines) {
+          await client.query(
+            `INSERT INTO ${schemaName}.quote_line_items
+               (tenant_id, quote_id, description, quantity, unit_price, sort_order)
+             VALUES ($1,$2,$3,$4,$5,$6)`,
+            [tenantId, quote.id, line.description, line.quantity, line.unitPrice, line.sortOrder]
+          );
+        }
+        const attached = await client.query(
+          `UPDATE ${schemaName}.inventory_reservations
+              SET quote_id = $1
+            WHERE tenant_id = $2
+              AND id = ANY($3::uuid[])
+              AND status = 'held'
+              AND held_until > now()`,
+          [quote.id, tenantId, holdIds]
+        );
+        if (attached.rowCount !== holdIds.length) {
+          const err = new Error('Could not attach all holds to the quote');
+          err.status = 409;
+          throw err;
+        }
+        return { customer, quote, line_items: lines, holds: holds.rows };
+      });
+      res.status(201).json({
+        ...result,
+        schema: schemaName,
+        renter_magic_link: null,
+        hold_ttl_note: 'Holds stay held until paid or the 2-hour TTL. Square or staff mark-paid confirms them.',
+      });
+    } catch (err) {
+      if (err.status === 409) {
+        return res.status(409).json({ error: err.message });
+      }
+      req.log?.error?.({ err }, 'checkout failed');
+      res.status(500).json({ error: 'Failed to save checkout' });
     }
   });
 
@@ -175,6 +414,44 @@ export function quoteRoutes(ctx) {
     }
   });
 
+  router.patch('/:id', async (req, res) => {
+    const tenantId = hmacTenantId(req);
+    if (!UUID_RE.test(req.params.id)) {
+      return res.status(400).json({ error: 'id must be a UUID' });
+    }
+    const documentId =
+      typeof req.body?.document_id === 'string' && UUID_RE.test(req.body.document_id.trim())
+        ? req.body.document_id.trim()
+        : null;
+    const envelopeId =
+      typeof req.body?.envelope_id === 'string' && UUID_RE.test(req.body.envelope_id.trim())
+        ? req.body.envelope_id.trim()
+        : null;
+    if (!documentId && !envelopeId) {
+      return res.status(400).json({ error: 'document_id or envelope_id is required' });
+    }
+    try {
+      const { schema, db } = await scoped(req);
+      const { rows } = await db.query(
+        `UPDATE ${schema}.quotes
+            SET document_id = COALESCE($3, document_id),
+                envelope_id = COALESCE($4, envelope_id),
+                updated_at = now()
+          WHERE id = $1 AND tenant_id = $2
+          RETURNING id, customer_id, status, document_id, envelope_id,
+                    delivery_fee, subtotal, total, fulfillment, created_at`,
+        [req.params.id, tenantId, documentId, envelopeId]
+      );
+      if (!rows[0]) {
+        return res.status(404).json({ error: 'Quote not found' });
+      }
+      res.json({ quote: rows[0], schema });
+    } catch (err) {
+      req.log?.error?.({ err }, 'quote envelope attach failed');
+      res.status(500).json({ error: 'Failed to store envelope' });
+    }
+  });
+
   router.get('/:id', async (req, res) => {
     try {
       const { tenantId, schema, db } = await scoped(req);
@@ -211,16 +488,121 @@ export function quoteRoutes(ctx) {
     }
   });
 
+  router.post('/:id/payment-link', async (req, res) => {
+    const tenantId = hmacTenantId(req);
+    if (!UUID_RE.test(req.params.id)) {
+      return res.status(400).json({ error: 'id must be a UUID' });
+    }
+    const allowedOrigins = ctx.allowedOrigins || [];
+    let redirectUrl = null;
+    const origin = clip(req.body?.redirect_origin, 200);
+    if (origin) {
+      const trimmed = origin.replace(/\/$/, '');
+      if (allowedOrigins.includes(trimmed)) {
+        redirectUrl = `${trimmed}/#rentals?quote=${req.params.id}`;
+      }
+    }
+    try {
+      const { schema, db } = await scoped(req);
+      const found = await db.query(
+        `SELECT q.id, q.status, q.total, c.email
+           FROM ${schema}.quotes q
+           JOIN ${schema}.customers c
+             ON c.id = q.customer_id AND c.tenant_id = q.tenant_id
+          WHERE q.id = $1 AND q.tenant_id = $2`,
+        [req.params.id, tenantId]
+      );
+      const quote = found.rows[0];
+      if (!quote) {
+        return res.status(404).json({ error: 'Quote not found' });
+      }
+      if (quote.status === 'paid') {
+        return res.status(409).json({ error: 'Quote is already paid' });
+      }
+      const amountCents = dollarsToCents(quote.total);
+      if (amountCents == null) {
+        return res.status(400).json({ error: 'Quote total must be a positive amount' });
+      }
+      if (typeof ctx.square?.createPaymentLink !== 'function') {
+        return res.status(503).json({ error: 'Square is not configured' });
+      }
+      const link = await ctx.square.createPaymentLink(tenantId, {
+        idempotencyKey: quote.id,
+        name: 'Rental booking',
+        amountCents,
+        redirectUrl,
+        buyerEmail: quote.email,
+        paymentNote: quote.id,
+      });
+      res.status(201).json({
+        url: link.url,
+        id: link.id,
+        quote_id: quote.id,
+        amount_cents: amountCents,
+      });
+    } catch (err) {
+      if (err.status) {
+        return res.status(err.status).json({ error: err.message });
+      }
+      req.log?.error?.({ err }, 'payment link failed');
+      res.status(500).json({ error: 'Failed to create payment link' });
+    }
+  });
+
   router.post('/:id/payments', async (req, res) => {
     const tenantId = hmacTenantId(req);
-    const amount = money(req.body?.amount, null);
-    if (amount == null || amount <= 0) {
+    if (!UUID_RE.test(req.params.id)) {
+      return res.status(400).json({ error: 'id must be a UUID' });
+    }
+    const amount =
+      req.body?.amount == null || req.body?.amount === ''
+        ? null
+        : money(req.body.amount, null);
+    if (amount != null && amount <= 0) {
       return res.status(400).json({ error: 'amount must be a positive number' });
     }
     const status = clip(req.body?.status, 32) || 'paid';
     const method = clip(req.body?.method, 40) || 'staff_recorded';
     try {
+      const schemaName = (await ensureQuoteTables(pool, tenantId)).schema;
+      if (status === 'paid') {
+        const result = await withTenantTransaction(pool, tenantId, async (client) => {
+          const quote = await client.query(
+            `SELECT id, status, total FROM ${schemaName}.quotes WHERE id = $1 AND tenant_id = $2`,
+            [req.params.id, tenantId]
+          );
+          if (!quote.rows[0]) {
+            const err = new Error('Quote not found');
+            err.status = 404;
+            throw err;
+          }
+          const payAmount = amount != null ? amount : money(quote.rows[0].total, null);
+          if (payAmount == null || payAmount <= 0) {
+            const err = new Error('amount must be a positive number');
+            err.status = 400;
+            throw err;
+          }
+          return applyPaidQuote(client, {
+            schema: schemaName,
+            tenantId,
+            quoteId: req.params.id,
+            amount: payAmount,
+            method,
+            externalId: clip(req.body?.external_id, 120),
+            recordedBy: req.identity.userId,
+          });
+        });
+        return res.status(result.alreadyPaid ? 200 : 201).json({
+          payment: result.payment,
+          quote: result.quote,
+          schema: schemaName,
+        });
+      }
+
       const { schema, db } = await scoped(req);
+      if (amount == null || amount <= 0) {
+        return res.status(400).json({ error: 'amount must be a positive number' });
+      }
       const quote = await db.query(
         `SELECT id FROM ${schema}.quotes WHERE id = $1 AND tenant_id = $2`,
         [req.params.id, tenantId]
@@ -245,6 +627,9 @@ export function quoteRoutes(ctx) {
       );
       res.status(201).json({ payment: rows[0], schema });
     } catch (err) {
+      if (err.status === 400 || err.status === 404 || err.status === 409) {
+        return res.status(err.status).json({ error: err.message });
+      }
       req.log?.error?.({ err }, 'payment create failed');
       res.status(500).json({ error: 'Failed to record payment' });
     }

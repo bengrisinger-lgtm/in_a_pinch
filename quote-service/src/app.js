@@ -5,7 +5,7 @@ import { requireStaff } from './auth.js';
 import { quoteRoutes } from './routes.js';
 import { inventoryRoutes } from './inventory.js';
 
-export function createApp({ pool, verify, expectedTenantId, allowedOrigins = [] } = {}) {
+export function createApp({ pool, verify, expectedTenantId, allowedOrigins = [], square } = {}) {
   if (!pool || typeof verify !== 'function') {
     throw new Error('createApp requires pool and verify');
   }
@@ -35,7 +35,11 @@ export function createApp({ pool, verify, expectedTenantId, allowedOrigins = [] 
 
   const gated = requireStaff({ verify, expectedTenantId });
   const inv = inventoryRoutes({ pool });
-  const routes = quoteRoutes({ pool });
+  const routes = quoteRoutes({
+    pool,
+    allowedOrigins,
+    square,
+  });
   app.use('/api/v1/quotes/inventory', gated, inv);
   app.use('/inventory', gated, inv);
   app.use('/api/v1/quotes', gated, routes);

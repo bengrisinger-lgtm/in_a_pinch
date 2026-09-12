@@ -8,7 +8,7 @@ This is the IAP tenant app, not console-service. The session cookie is HttpOnly.
 
 Until renter self-signup exists, this is a **staff** catalog. Public unauthenticated browse would need a different gateway registration (`require_session` is forced true on this spoke).
 
-Add-to-cart calls `POST /holds` (2-hour TTL). Checkout details, kit agreement, and Square are later playbook steps. **No card PAN. No typed-name signature.**
+Add-to-cart calls `POST /holds` (2-hour TTL). Checkout is **Order → Details & Delivery → Agreement → Payment**. Details (`POST /api/v1/quotes/checkout`) is staff-filled: renter name/email/phone, pickup vs delivery, event address, one-way miles/minutes. Delivery fee is four legs × $0.66/mi + $30/hr on pinch-service — not a client-supplied amount. Maps/GPS later. Agreement uses kit `client.signing` (signer app, not a typed name or canvas on this page) and `PATCH`es the envelope UUID onto the quote. Payment is Square Payment Link or staff Mark paid. **No card PAN. No typed-name signature.** Renter magic-link signup is later; do not send renters through platform Create Account.
 
 ## Local
 
@@ -21,7 +21,7 @@ npm run dev
 
 Opens `http://localhost:5174`. Login redirects to `VITE_AUTH_URL`. After login, CORS / cookie scope must include this origin (apex cookie does not include `localhost`). For a real session, host this app on an IAP host (`*.inapinchav.com`).
 
-`npm test` greps the source: no JWT, no `localStorage` secrets, no PAN fields, no `@securedbackend/sdk/server`.
+`npm test` greps the source: no JWT, no `localStorage` secrets, no PAN fields, no canvas / typed-name signature, kit `client.signing`, no `@securedbackend/sdk/server`.
 
 ## Live API
 

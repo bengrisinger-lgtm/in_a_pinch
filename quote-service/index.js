@@ -7,6 +7,7 @@
 import pg from 'pg';
 import { createServerClient } from '@securedbackend/sdk/server';
 import { createApp } from './src/app.js';
+import { createSquareRuntime } from './src/square.js';
 
 const REQUIRED = ['HMAC_SECRET', 'DB_HOST', 'DB_USER', 'DB_PASSWORD', 'DB_NAME'];
 for (const key of REQUIRED) {
@@ -48,6 +49,12 @@ const app = createApp({
   verify: (req) => server.auth.verifyGatewayHmac(req),
   expectedTenantId: process.env.TENANT_ID || undefined,
   allowedOrigins,
+  square: createSquareRuntime({
+    consoleServiceUrl: process.env.CONSOLE_SERVICE_URL,
+    envAccessToken: process.env.SQUARE_ACCESS_TOKEN,
+    envLocationId: process.env.SQUARE_LOCATION_ID,
+    apiBase: process.env.SQUARE_API_BASE || 'https://connect.squareup.com',
+  }),
 });
 
 const PORT = process.env.PORT || 8080;
