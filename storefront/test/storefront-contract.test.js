@@ -33,6 +33,11 @@ describe('IAP storefront contract', () => {
     assert.match(blob, /connected calendar/);
     assert.match(blob, /Signatures/);
     assert.match(blob, /Templates/);
+    assert.match(blob, /whyTemplateNotReady/);
+    assert.match(blob, /exactly two required-signer roles/);
+    assert.match(blob, /click Signature/);
+    assert.match(blob, /staffSigningUrl/);
+    assert.match(blob, /customerSigningUrl/);
     assert.doesNotMatch(blob, /x:\s*72,\s*y:\s*640/);
     assert.doesNotMatch(blob, /signer_index/);
     assert.doesNotMatch(blob, /PdfBlockEditor/);

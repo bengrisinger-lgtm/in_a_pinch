@@ -7,14 +7,17 @@ import {
   sendServiceAgreement,
   templateIsReadyForCheckout,
   uploadAgreementPdf,
+  whyTemplateNotReady,
   type ReadyPdf,
   type SentAgreement,
   type SignTemplate,
 } from '../lib/agreement';
 
 type Props = {
-  signerName: string;
-  signerEmail: string;
+  customerName: string;
+  customerEmail: string;
+  staffName: string;
+  staffEmail: string;
   sending: boolean;
   error: string | null;
   sent: SentAgreement | null;
@@ -25,8 +28,10 @@ type Props = {
 };
 
 export default function AgreementPanel({
-  signerName,
-  signerEmail,
+  customerName,
+  customerEmail,
+  staffName,
+  staffEmail,
   sending,
   error,
   sent,
@@ -69,7 +74,8 @@ export default function AgreementPanel({
   }, []);
 
   const selected = templates.find((t) => t.id === templateId) || null;
-  const templateReady = selected ? templateIsReadyForCheckout(selected) : false;
+  const notReadyReason = whyTemplateNotReady(selected);
+  const templateReady = notReadyReason === null;
   const needsPdfPicker = Boolean(selected && !selected.document_id);
 
   function onPickTemplate(id: string) {
@@ -103,8 +109,8 @@ export default function AgreementPanel({
       onError(PLACE_TEMPLATE_BLOCKS);
       return;
     }
-    if (!templateReady) {
-      onError(PLACE_TEMPLATE_BLOCKS);
+    if (notReadyReason) {
+      onError(notReadyReason);
       return;
     }
     if (needsPdfPicker && !documentId) {
@@ -117,8 +123,10 @@ export default function AgreementPanel({
       const result = await sendServiceAgreement({
         templateId,
         documentId: needsPdfPicker ? documentId : undefined,
-        signerName,
-        signerEmail,
+        customerName,
+        customerEmail,
+        staffName,
+        staffEmail,
       });
       setCreated(result);
       await onSent(result);
@@ -148,9 +156,10 @@ export default function AgreementPanel({
     <div>
       <h3>Service agreement</h3>
       <p className="muted">
-        The renter signs on the kit signer app — not a typed name on this page. Place the signature
-        once under Signatures → Templates in the tenant console. This quote only stores the envelope
-        UUID.
+        Two kit signatures: Customer (the renter) and Staff (you, filled from this login). Place both
+        blocks under Signatures → Templates. Checkout does not stamp a signature without the kit
+        consent screen. Self-checkout later uses the same Staff role for the designated company
+        signer.
       </p>
       {shown ? (
         <div className="summary">
@@ -158,13 +167,22 @@ export default function AgreementPanel({
             <strong>Envelope sent.</strong> Id {shown.envelopeId}
           </p>
           <p className="muted">
-            {shown.inviteSent
-              ? `Invite emailed to ${signerEmail}. Copy the link if they need it.`
-              : `Invite email did not send (${shown.inviteFailure || 'unknown'}). Use the link.`}
+            {shown.customerInviteSent
+              ? `Customer invite emailed to ${shown.customerEmail}.`
+              : `Customer invite did not send (${shown.customerInviteFailure || 'unknown'}). Use their link.`}
           </p>
           <p>
-            <a href={shown.signingUrl} target="_blank" rel="noopener noreferrer">
-              Open signing link
+            <a href={shown.customerSigningUrl} target="_blank" rel="noopener noreferrer">
+              Open customer signing link
+            </a>
+          </p>
+          <p className="muted">
+            Sign now as {shown.staffEmail}. That is your Staff block — the kit still records consent.
+            {shown.staffInviteSent ? '' : ` Staff invite email skipped (${shown.staffInviteFailure || 'unknown'}).`}
+          </p>
+          <p>
+            <a href={shown.staffSigningUrl} target="_blank" rel="noopener noreferrer">
+              Sign as staff now
             </a>
           </p>
           {error ? <p className="error">{error}</p> : null}
@@ -198,7 +216,7 @@ export default function AgreementPanel({
                   templates.map((t) => (
                     <option key={t.id} value={t.id}>
                       {t.name}
-                      {templateIsReadyForCheckout(t) ? '' : ' (place signature blocks first)'}
+                      {templateIsReadyForCheckout(t) ? '' : ' (not ready for checkout)'}
                     </option>
                   ))
                 )}
@@ -242,17 +260,25 @@ export default function AgreementPanel({
               </>
             ) : null}
             <div>
-              <label>Signer</label>
-              <input value={signerName} readOnly />
+              <label>Customer</label>
+              <input value={customerName} readOnly />
             </div>
             <div>
-              <label>Signer email</label>
-              <input value={signerEmail} readOnly />
+              <label>Customer email</label>
+              <input value={customerEmail} readOnly />
+            </div>
+            <div>
+              <label>Staff signer</label>
+              <input value={staffName} readOnly />
+            </div>
+            <div>
+              <label>Staff email</label>
+              <input value={staffEmail} readOnly />
             </div>
           </div>
           {listError ? <p className="error">{listError}</p> : null}
           {error ? <p className="error">{error}</p> : null}
-          {!templateReady ? <p className="muted">{PLACE_TEMPLATE_BLOCKS}</p> : null}
+          {notReadyReason ? <p className="muted">{notReadyReason}</p> : null}
           <div className="actions">
             <span />
             <button type="submit" disabled={sending || !templateReady}>

@@ -27,11 +27,22 @@ type Props = {
   startsOn: string;
   endsOn: string;
   nights: number;
+  staffEmail: string;
+  staffName: string;
   onClose: () => void;
   onRemove: (skuId: string) => void;
 };
 
-export default function CartDrawer({ cart, startsOn, endsOn, nights, onClose, onRemove }: Props) {
+export default function CartDrawer({
+  cart,
+  startsOn,
+  endsOn,
+  nights,
+  staffEmail,
+  staffName,
+  onClose,
+  onRemove,
+}: Props) {
   const [panel, setPanel] = useState<1 | 2 | 3 | 4>(1);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -154,8 +165,10 @@ export default function CartDrawer({ cart, startsOn, endsOn, nights, onClose, on
 
         {saved && panel === 3 ? (
           <AgreementPanel
-            signerName={name.trim()}
-            signerEmail={email.trim()}
+            customerName={name.trim()}
+            customerEmail={email.trim()}
+            staffName={staffName}
+            staffEmail={staffEmail}
             sending={saving}
             error={error}
             sent={agreement}

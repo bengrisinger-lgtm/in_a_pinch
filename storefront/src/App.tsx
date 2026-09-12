@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { CurrentUser } from './lib/kit';
 import { kit, redirectToLogin } from './lib/kit';
+import { staffDisplayName } from './lib/templateRoles.js';
 import CartDrawer from './components/CartDrawer';
 import { spanDays } from './lib/dates';
 import { cancelHold } from './lib/inventoryApi';
@@ -117,6 +118,8 @@ export default function App() {
           startsOn={cart[0]?.startsOn || ''}
           endsOn={cart[0]?.endsOn || ''}
           nights={cart[0] ? spanDays(cart[0].startsOn, cart[0].endsOn) : 1}
+          staffEmail={user.email}
+          staffName={staffDisplayName(user.email)}
           onClose={() => setCartOpen(false)}
           onRemove={removeLine}
         />

@@ -1,12 +1,24 @@
 import { PlatformError, type SignTemplate } from '@securedbackend/sdk';
 import { kit } from './kit';
+import {
+  classifyIapSignerRoles,
+  staffDisplayName,
+  whyTemplateNotReady,
+  TEMPLATE_NEEDS_TWO_SIGNER_ROLES,
+} from './templateRoles.js';
 
 const READY = new Set(['materialized']);
-const SIG_TYPES = new Set(['signature', 'initials']);
-const SENDER_FILL = new Set(['sender_text', 'sender_dropdown']);
 
-export const PLACE_TEMPLATE_BLOCKS =
-  'Place the renter signature in the tenant console under Signatures → Templates. Checkout cannot guess a corner of the page.';
+export {
+  PLACE_TEMPLATE_BLOCKS,
+  TEMPLATE_HAS_SENDER_FILL,
+  TEMPLATE_NEEDS_SIGNATURE_BLOCK,
+  TEMPLATE_NEEDS_TWO_SIGNER_ROLES,
+  classifyIapSignerRoles,
+  staffDisplayName,
+  templateIsReadyForCheckout,
+  whyTemplateNotReady,
+} from './templateRoles.js';
 
 export type ReadyPdf = {
   id: string;
@@ -76,45 +88,46 @@ export async function uploadAgreementPdf(
   throw new Error('Scan timed out. Try the PDF again, or pick one already in Documents.');
 }
 
-export function renterSignerRole(template: SignTemplate): string | null {
-  const roles = Array.isArray(template.signer_roles) ? template.signer_roles : [];
-  const signerRoles = roles.filter((r) => !r.recipient_role || r.recipient_role === 'signer');
-  if (roles.length !== 1 || signerRoles.length !== 1) return null;
-  const label = signerRoles[0]?.role_label?.trim();
-  return label || null;
-}
-
-export function templateIsReadyForCheckout(template: SignTemplate): boolean {
-  if (!template?.id) return false;
-  if (!renterSignerRole(template)) return false;
-  const blocks = Array.isArray(template.blocks) ? template.blocks : [];
-  if (!blocks.some((b) => SIG_TYPES.has(b.type))) return false;
-  if (blocks.some((b) => SENDER_FILL.has(b.type))) return false;
-  return true;
-}
-
 export type SentAgreement = {
   envelopeId: string;
   documentId: string;
-  signingUrl: string;
-  inviteSent: boolean;
-  inviteFailure: string | null;
+  customerSigningUrl: string;
+  staffSigningUrl: string;
+  customerEmail: string;
+  staffEmail: string;
+  customerInviteSent: boolean;
+  customerInviteFailure: string | null;
+  staffInviteSent: boolean;
+  staffInviteFailure: string | null;
 };
 
 export async function sendServiceAgreement(input: {
   templateId: string;
   documentId?: string;
-  signerName: string;
-  signerEmail: string;
+  customerName: string;
+  customerEmail: string;
+  staffName: string;
+  staffEmail: string;
 }): Promise<SentAgreement> {
   const client = kit();
   const { template } = await client.signing.getTemplate(input.templateId);
-  if (!templateIsReadyForCheckout(template)) {
-    throw new Error(PLACE_TEMPLATE_BLOCKS);
+  const notReady = whyTemplateNotReady(template);
+  if (notReady) {
+    throw new Error(notReady);
   }
-  const roleLabel = renterSignerRole(template);
-  if (!roleLabel) {
-    throw new Error(PLACE_TEMPLATE_BLOCKS);
+  const pair = classifyIapSignerRoles(template);
+  if (!pair) {
+    throw new Error(TEMPLATE_NEEDS_TWO_SIGNER_ROLES);
+  }
+  const customerEmail = input.customerEmail.trim();
+  const staffEmail = input.staffEmail.trim();
+  if (!customerEmail || !staffEmail) {
+    throw new Error('Customer and staff emails are required to send the agreement.');
+  }
+  if (customerEmail.toLowerCase() === staffEmail.toLowerCase()) {
+    throw new Error(
+      'Customer and staff must be different people. Use the renter’s email, not the logged-in staff email.'
+    );
   }
   const documentId = template.document_id || input.documentId;
   if (!documentId) {
@@ -125,19 +138,32 @@ export async function sendServiceAgreement(input: {
     document_id: documentId,
     document_hash: await hashDocumentId(documentId),
     subject: 'Service agreement',
-    signers: [{ name: input.signerName, email: input.signerEmail, role_label: roleLabel }],
+    signers: [
+      { name: input.customerName.trim(), email: customerEmail, role_label: pair.customer },
+      {
+        name: input.staffName.trim() || staffDisplayName(staffEmail),
+        email: staffEmail,
+        role_label: pair.staff,
+      },
+    ],
   });
   const sent = await client.signing.send(created.envelope.id);
-  const signer = sent.signers[0];
-  if (!signer?.signing_url_token) {
-    throw new Error('Send succeeded but returned no signer token.');
+  const customer = sent.signers.find((s) => s.role_label === pair.customer);
+  const staff = sent.signers.find((s) => s.role_label === pair.staff);
+  if (!customer?.signing_url_token || !staff?.signing_url_token) {
+    throw new Error('Send succeeded but did not return both signing tokens.');
   }
   return {
     envelopeId: created.envelope.id,
     documentId,
-    signingUrl: client.signing.signingUrl(signer.signing_url_token),
-    inviteSent: signer.invite_sent,
-    inviteFailure: signer.invite_failure_reason,
+    customerSigningUrl: client.signing.signingUrl(customer.signing_url_token),
+    staffSigningUrl: client.signing.signingUrl(staff.signing_url_token),
+    customerEmail,
+    staffEmail,
+    customerInviteSent: customer.invite_sent,
+    customerInviteFailure: customer.invite_failure_reason,
+    staffInviteSent: staff.invite_sent,
+    staffInviteFailure: staff.invite_failure_reason,
   };
 }
 
