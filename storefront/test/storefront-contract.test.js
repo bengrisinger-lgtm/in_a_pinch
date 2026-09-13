@@ -22,6 +22,9 @@ describe('IAP storefront contract', () => {
     const blob = files.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
     assert.match(blob, /createClient/);
     assert.match(blob, /credentials: 'include'/);
+    assert.match(blob, /cache: 'no-store'/);
+    assert.match(blob, /asTemplateList/);
+    assert.match(blob, /Loading templates/);
     assert.match(blob, /\/api\/v1\/quotes/);
     assert.match(blob, /\/checkout/);
     assert.match(blob, /payment-link/);
@@ -38,6 +41,11 @@ describe('IAP storefront contract', () => {
     assert.match(blob, /click Signature/);
     assert.match(blob, /staffSigningUrl/);
     assert.match(blob, /customerSigningUrl/);
+    assert.match(blob, /patchUnit/);
+    assert.match(blob, /status: 'retired'/);
+    assert.match(blob, /Hide from catalog/);
+    assert.match(blob, /Change serial/);
+    assert.doesNotMatch(blob, /method:\s*['"]DELETE['"]/);
     assert.doesNotMatch(blob, /x:\s*72,\s*y:\s*640/);
     assert.doesNotMatch(blob, /signer_index/);
     assert.doesNotMatch(blob, /PdfBlockEditor/);

@@ -12,8 +12,12 @@ export function authUrl(): string {
   return url.replace(/\/$/, '');
 }
 
+function gatewayFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  return globalThis.fetch.bind(globalThis)(input, { ...init, cache: 'no-store' });
+}
+
 export function kit(): PlatformClient {
-  return createClient({ baseUrl: gatewayUrl() });
+  return createClient({ baseUrl: gatewayUrl(), fetch: gatewayFetch });
 }
 
 export function redirectToLogin(): void {

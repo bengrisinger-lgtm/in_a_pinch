@@ -194,7 +194,7 @@ function makePool() {
       };
     }
 
-    if (compact.includes('FROM') && compact.includes('.inventory_reservations') && compact.includes('SELECT id FROM')) {
+    if (compact.includes('FROM') && compact.includes('.inventory_reservations') && /SELECT (?:r\.)?id FROM/.test(compact) && !compact.includes('CURRENT_DATE')) {
       const unitId = params[0];
       const starts = params[2];
       const ends = params[3];
@@ -221,6 +221,26 @@ function makePool() {
       };
     }
 
+    if (compact.includes('CURRENT_DATE') && compact.includes('.inventory_reservations')) {
+      const today = new Date().toISOString().slice(0, 10);
+      if (compact.includes('JOIN')) {
+        const skuId = params[0];
+        const tenantId = params[1];
+        const unitIds = new Set(
+          (units[schema] || []).filter((u) => u.sku_id === skuId).map((u) => u.id)
+        );
+        const hit = (reservations[schema] || []).find(
+          (r) =>
+            unitIds.has(r.unit_id) && r.tenant_id === tenantId && isBlocking(r) && r.ends_on >= today
+        );
+        return { rows: hit ? [{ id: hit.id }] : [] };
+      }
+      const hit = (reservations[schema] || []).find(
+        (r) => r.unit_id === params[0] && r.tenant_id === params[1] && isBlocking(r) && r.ends_on >= today
+      );
+      return { rows: hit ? [{ id: hit.id }] : [] };
+    }
+
     if (compact.includes('FROM') && compact.includes('.inventory_reservations') && compact.includes('JOIN')) {
       const skuId = params[0];
       const monthStart = params[2];
@@ -237,6 +257,54 @@ function makePool() {
           r.ends_on >= monthStart
       );
       return { rows };
+    }
+
+    if (compact.includes('UPDATE') && compact.includes('.inventory_skus')) {
+      const tenantId = params[params.length - 1];
+      const skuId = params[params.length - 2];
+      const list = skus[schema] || [];
+      const row = list.find((s) => s.id === skuId && s.tenant_id === tenantId);
+      if (!row) return { rows: [] };
+      let i = 0;
+      if (compact.includes('name =')) row.name = params[i++];
+      if (compact.includes('category =')) row.category = params[i++];
+      if (compact.includes('daily_rate =')) row.daily_rate = params[i++];
+      if (compact.includes('active =')) row.active = params[i++];
+      row.updated_at = '2026-09-12T00:00:00.000Z';
+      return { rows: [{ ...row }] };
+    }
+
+    if (compact.includes('UPDATE') && compact.includes('.inventory_units')) {
+      const list = units[schema] || [];
+      const row = list.find(
+        (u) => u.id === params[0] && u.sku_id === params[1] && u.tenant_id === params[2]
+      );
+      if (!row) return { rows: [] };
+      let i = 3;
+      if (compact.includes('serial_number =')) {
+        const next = params[i++];
+        if (list.some((u) => u.id !== row.id && u.sku_id === row.sku_id && u.serial_number === next)) {
+          const err = new Error('duplicate');
+          err.code = '23505';
+          throw err;
+        }
+        row.serial_number = next;
+      }
+      if (compact.includes('nickname =')) row.nickname = params[i++];
+      if (compact.includes('status =')) row.status = params[i++];
+      return {
+        rows: [
+          {
+            id: row.id,
+            sku_id: row.sku_id,
+            serial_number: row.serial_number,
+            nickname: row.nickname,
+            status: row.status,
+            notes: row.notes,
+            created_at: row.created_at,
+          },
+        ],
+      };
     }
 
     if (compact.includes('UPDATE') && compact.includes('.inventory_reservations') && compact.includes("status = 'confirmed'")) {
@@ -326,7 +394,12 @@ describe('serial inventory HMAC scope', () => {
     assert.equal(HOLD_TTL_HOURS, 2);
     const src = fs.readFileSync(path.join(__dirname, '../src/inventory.js'), 'utf8');
     assert.match(src, /now\(\) \+ \(\$7::int \* interval '1 hour'\)/);
-    assert.match(src, /held_until > now\(\)/);
+    assert.match(src, /r\.held_until > now\(\)/);
+    assert.match(
+      src,
+      /r\.status = 'confirmed'/,
+      'BLOCKING must qualify reservation status — units.status makes unqualified status ambiguous on dated GET /skus'
+    );
     assert.doesNotMatch(src, /COOKIE_SECRET|localStorage|jsonwebtoken/);
   });
 
@@ -507,5 +580,118 @@ describe('serial inventory HMAC scope', () => {
     assert.equal(body.days.length, 31);
     assert.equal(body.days[0].date, '2026-10-01');
     assert.equal(body.hold_ttl_hours, 2);
+  });
+});
+
+describe('retire and rotate serials', () => {
+  it('renames a serial and ignores body.tenant_id', async () => {
+    const skuRes = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Wireless', daily_rate: 30 }),
+    });
+    const skuId = (await skuRes.json()).sku.id;
+    const u1 = await fetch(`${urlA}/api/v1/quotes/inventory/skus/${skuId}/units`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serial_number: 'OLD-1' }),
+    });
+    const unitId = (await u1.json()).unit.id;
+    const patched = await fetch(`${urlA}/api/v1/quotes/inventory/skus/${skuId}/units/${unitId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenant_id: TENANT_B, serial_number: 'NEW-1' }),
+    });
+    assert.equal(patched.status, 200);
+    const body = await patched.json();
+    assert.equal(body.unit.serial_number, 'NEW-1');
+    assert.equal(body.unit.status, 'active');
+  });
+
+  it('retires a serial so it is not rentable, then restores it', async () => {
+    const skuRes = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Sub', daily_rate: 80 }),
+    });
+    const skuId = (await skuRes.json()).sku.id;
+    const u1 = await fetch(`${urlA}/api/v1/quotes/inventory/skus/${skuId}/units`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serial_number: 'SUB-RETIRE' }),
+    });
+    const unitId = (await u1.json()).unit.id;
+    const retired = await fetch(`${urlA}/api/v1/quotes/inventory/skus/${skuId}/units/${unitId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'retired' }),
+    });
+    assert.equal(retired.status, 200);
+    const listed = await fetch(`${urlA}/api/v1/quotes/inventory/skus`);
+    const skuRow = (await listed.json()).skus.find((s) => s.id === skuId);
+    assert.equal(skuRow.units_total, 0);
+    const restored = await fetch(`${urlA}/api/v1/quotes/inventory/skus/${skuId}/units/${unitId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'active' }),
+    });
+    assert.equal(restored.status, 200);
+    const listed2 = await fetch(`${urlA}/api/v1/quotes/inventory/skus`);
+    const skuRow2 = (await listed2.json()).skus.find((s) => s.id === skuId);
+    assert.equal(skuRow2.units_total, 1);
+  });
+
+  it('does not retire a serial with an upcoming hold', async () => {
+    const skuRes = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Held', daily_rate: 10 }),
+    });
+    const skuId = (await skuRes.json()).sku.id;
+    const u1 = await fetch(`${urlA}/api/v1/quotes/inventory/skus/${skuId}/units`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serial_number: 'HELD-1' }),
+    });
+    const unitId = (await u1.json()).unit.id;
+    const hold = await fetch(`${urlA}/api/v1/quotes/inventory/holds`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        unit_id: unitId,
+        starts_on: '2026-12-01',
+        ends_on: '2026-12-03',
+      }),
+    });
+    assert.equal(hold.status, 201);
+    const retired = await fetch(`${urlA}/api/v1/quotes/inventory/skus/${skuId}/units/${unitId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'retired' }),
+    });
+    assert.equal(retired.status, 409);
+  });
+
+  it('hides a SKU from the catalog without deleting rows', async () => {
+    const skuRes = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Hide me', daily_rate: 5 }),
+    });
+    const skuId = (await skuRes.json()).sku.id;
+    const hidden = await fetch(`${urlA}/api/v1/quotes/inventory/skus/${skuId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenant_id: TENANT_B, active: false }),
+    });
+    assert.equal(hidden.status, 200);
+    const body = await hidden.json();
+    assert.equal(body.sku.active, false);
+    const other = await fetch(`${urlB}/api/v1/quotes/inventory/skus/${skuId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ active: false }),
+    });
+    assert.equal(other.status, 404);
   });
 });

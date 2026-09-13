@@ -46,28 +46,38 @@ export default function AgreementPanel({
   const [documentId, setDocumentId] = useState('');
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
+  const [listBusy, setListBusy] = useState(true);
   const [created, setCreated] = useState<SentAgreement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([listAgreementTemplates(), listReadyPdfs()])
-      .then(([tpls, pdfs]) => {
-        if (cancelled) return;
-        setTemplates(tpls);
-        setDocs(pdfs);
-        const ready = tpls.find(templateIsReadyForCheckout);
-        const pick = ready || tpls[0];
-        if (pick) {
-          setTemplateId(pick.id);
-          if (pick.document_id) setDocumentId(pick.document_id);
-          else if (pdfs[0]) setDocumentId(pdfs[0].id);
-        } else if (pdfs[0]) {
-          setDocumentId(pdfs[0].id);
-        }
-      })
-      .catch((err) => {
+    (async () => {
+      let tpls: SignTemplate[] = [];
+      let pdfs: ReadyPdf[] = [];
+      try {
+        tpls = await listAgreementTemplates();
+        if (!cancelled) setTemplates(tpls);
+      } catch (err) {
         if (!cancelled) setListError(kitErrorMessage(err));
-      });
+      }
+      try {
+        pdfs = await listReadyPdfs();
+        if (!cancelled) setDocs(pdfs);
+      } catch {
+        // PDF catalog is optional until a template has no document_id.
+      }
+      if (cancelled) return;
+      const ready = tpls.find(templateIsReadyForCheckout);
+      const pick = ready || tpls[0];
+      if (pick) {
+        setTemplateId(pick.id);
+        if (pick.document_id) setDocumentId(pick.document_id);
+        else if (pdfs[0]) setDocumentId(pdfs[0].id);
+      } else if (pdfs[0]) {
+        setDocumentId(pdfs[0].id);
+      }
+      setListBusy(false);
+    })();
     return () => {
       cancelled = true;
     };
@@ -211,7 +221,13 @@ export default function AgreementPanel({
                 required
               >
                 {templates.length === 0 ? (
-                  <option value="">No templates — place a signature in Signatures → Templates</option>
+                  <option value="">
+                    {listBusy
+                      ? 'Loading templates…'
+                      : listError
+                        ? 'Could not load templates'
+                        : 'No templates — place a signature in Signatures → Templates'}
+                  </option>
                 ) : (
                   templates.map((t) => (
                     <option key={t.id} value={t.id}>

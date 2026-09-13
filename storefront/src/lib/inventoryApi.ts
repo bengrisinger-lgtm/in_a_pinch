@@ -103,6 +103,27 @@ export function createUnit(skuId: string, input: { serial_number: string; nickna
   });
 }
 
+export function patchSku(
+  skuId: string,
+  input: { active?: boolean; name?: string; category?: string | null; daily_rate?: number }
+) {
+  return invFetch<{ sku: Sku }>(`/skus/${skuId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+}
+
+export function patchUnit(
+  skuId: string,
+  unitId: string,
+  input: { serial_number?: string; nickname?: string | null; status?: 'active' | 'retired' }
+) {
+  return invFetch<{ unit: InventoryUnit }>(`/skus/${skuId}/units/${unitId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+}
+
 export function loadCalendar(skuId: string, year: number, month: number) {
   const q = `?sku_id=${encodeURIComponent(skuId)}&year=${year}&month=${month}`;
   return invFetch<{

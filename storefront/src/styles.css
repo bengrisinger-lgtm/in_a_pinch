@@ -541,10 +541,35 @@ a.hub-tile:hover { border-color: var(--sun); }
 .unit-row {
   display: flex;
   justify-content: space-between;
+  align-items: start;
   gap: 12px;
   padding: 8px 0;
   border-bottom: 1px solid var(--line);
   font-size: 14px;
+}
+.unit-row.retired { opacity: 0.72; }
+.unit-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+.unit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.unit-actions button {
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.addrow.stock-serial {
+  grid-template-columns: 1fr auto;
+}
+.sku-actions {
+  margin-top: 12px;
 }
 @media (max-width: 820px) {
   .hero-inner { grid-template-columns: 1fr; }

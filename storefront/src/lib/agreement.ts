@@ -6,6 +6,7 @@ import {
   whyTemplateNotReady,
   TEMPLATE_NEEDS_TWO_SIGNER_ROLES,
 } from './templateRoles.js';
+import { asTemplateList, isGenuineEmptyTemplateList, templateListShapeHint } from './templateList.js';
 
 const READY = new Set(['materialized']);
 
@@ -169,7 +170,10 @@ export async function sendServiceAgreement(input: {
 
 export async function listAgreementTemplates(): Promise<SignTemplate[]> {
   const page = await kit().signing.listTemplates();
-  return page.templates || [];
+  const list = asTemplateList(page);
+  if (list.length) return list;
+  if (isGenuineEmptyTemplateList(page, list)) return [];
+  throw new Error(`Kit returned no templates (${templateListShapeHint(page)})`);
 }
 
 export type { SignTemplate };

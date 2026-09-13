@@ -15,7 +15,10 @@ const NAME_MAX = 200;
 const SERIAL_MAX = 80;
 const DATE_MAX_SPAN_DAYS = 366;
 
-const BLOCKING = `(status = 'confirmed' OR (status = 'held' AND held_until > now()))`;
+// Always alias inventory_reservations as `r`. Unqualified `status` is
+// ambiguous when this fragment is used next to inventory_units.status
+// (GET /skus?starts_on=… — catalog "Failed to list skus").
+const BLOCKING = `(r.status = 'confirmed' OR (r.status = 'held' AND r.held_until > now()))`;
 
 function hmacTenantId(req) {
   return req.identity?.tenantId || null;
@@ -68,6 +71,33 @@ async function scoped(pool, req) {
   const tenantId = hmacTenantId(req);
   const { schema } = await ensureQuoteTables(pool, tenantId);
   return { tenantId, schema, db: wrapWithTenant(pool, tenantId) };
+}
+
+const UNIT_STATUSES = new Set(['active', 'retired']);
+
+/** Paid/held rows that still overlap today or later. Past bookings do not block retire. */
+async function futureBlocking(db, schema, { tenantId, unitId, skuId }) {
+  if (unitId) {
+    const { rows } = await db.query(
+      `SELECT r.id FROM ${schema}.inventory_reservations r
+        WHERE r.unit_id = $1 AND r.tenant_id = $2
+          AND ${BLOCKING}
+          AND r.ends_on >= CURRENT_DATE
+        LIMIT 1`,
+      [unitId, tenantId]
+    );
+    return rows[0] || null;
+  }
+  const { rows } = await db.query(
+    `SELECT r.id FROM ${schema}.inventory_reservations r
+       JOIN ${schema}.inventory_units u ON u.id = r.unit_id
+      WHERE u.sku_id = $1 AND r.tenant_id = $2
+        AND ${BLOCKING}
+        AND r.ends_on >= CURRENT_DATE
+      LIMIT 1`,
+    [skuId, tenantId]
+  );
+  return rows[0] || null;
 }
 
 export function inventoryRoutes(ctx) {
@@ -237,6 +267,127 @@ export function inventoryRoutes(ctx) {
     } catch (err) {
       req.log?.error?.({ err }, 'unit list failed');
       res.status(500).json({ error: 'Failed to list units' });
+    }
+  });
+
+  router.patch('/skus/:skuId', async (req, res) => {
+    const tenantId = hmacTenantId(req);
+    const skuId = req.params.skuId;
+    if (!UUID_RE.test(skuId)) {
+      return res.status(400).json({ error: 'skuId must be a UUID' });
+    }
+    const setParts = [];
+    const params = [];
+    if (typeof req.body?.name === 'string') {
+      const name = clip(req.body.name, NAME_MAX);
+      if (!name) return res.status(400).json({ error: 'name is required' });
+      params.push(name);
+      setParts.push(`name = $${params.length}`);
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'category')) {
+      params.push(clip(req.body.category, NAME_MAX));
+      setParts.push(`category = $${params.length}`);
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'daily_rate')) {
+      const dailyRate = money(req.body.daily_rate, null);
+      if (dailyRate == null) {
+        return res.status(400).json({ error: 'daily_rate must be a non-negative number' });
+      }
+      params.push(dailyRate);
+      setParts.push(`daily_rate = $${params.length}`);
+    }
+    if (typeof req.body?.active === 'boolean') {
+      params.push(req.body.active);
+      setParts.push(`active = $${params.length}`);
+    }
+    if (setParts.length === 0) {
+      return res.status(400).json({ error: 'no fields to update' });
+    }
+    try {
+      const { schema, db } = await scoped(pool, req);
+      if (req.body?.active === false) {
+        const clash = await futureBlocking(db, schema, { tenantId, skuId });
+        if (clash) {
+          return res.status(409).json({
+            error: 'This SKU has a current or upcoming booking. Cancel that booking before hiding it.',
+          });
+        }
+      }
+      params.push(skuId, tenantId);
+      const { rows } = await db.query(
+        `UPDATE ${schema}.inventory_skus
+            SET ${setParts.join(', ')}, updated_at = now()
+          WHERE id = $${params.length - 1} AND tenant_id = $${params.length}
+          RETURNING id, name, category, description, daily_rate, active, created_at, updated_at`,
+        params
+      );
+      if (!rows[0]) {
+        return res.status(404).json({ error: 'SKU not found' });
+      }
+      res.json({ sku: rows[0], schema });
+    } catch (err) {
+      req.log?.error?.({ err }, 'sku patch failed');
+      res.status(500).json({ error: 'Failed to update sku' });
+    }
+  });
+
+  router.patch('/skus/:skuId/units/:unitId', async (req, res) => {
+    const tenantId = hmacTenantId(req);
+    const skuId = req.params.skuId;
+    const unitId = req.params.unitId;
+    if (!UUID_RE.test(skuId) || !UUID_RE.test(unitId)) {
+      return res.status(400).json({ error: 'skuId and unitId must be UUIDs' });
+    }
+    const setParts = [];
+    const params = [unitId, skuId, tenantId];
+    if (typeof req.body?.serial_number === 'string') {
+      const serial = clip(req.body.serial_number, SERIAL_MAX);
+      if (!serial) return res.status(400).json({ error: 'serial_number is required' });
+      params.push(serial);
+      setParts.push(`serial_number = $${params.length}`);
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'nickname')) {
+      params.push(clip(req.body.nickname, NAME_MAX));
+      setParts.push(`nickname = $${params.length}`);
+    }
+    if (typeof req.body?.status === 'string') {
+      const status = req.body.status.trim().toLowerCase();
+      if (!UNIT_STATUSES.has(status)) {
+        return res.status(400).json({ error: 'status must be active or retired' });
+      }
+      params.push(status);
+      setParts.push(`status = $${params.length}`);
+    }
+    if (setParts.length === 0) {
+      return res.status(400).json({ error: 'no fields to update' });
+    }
+    try {
+      const { schema, db } = await scoped(pool, req);
+      if (req.body?.status && String(req.body.status).trim().toLowerCase() === 'retired') {
+        const clash = await futureBlocking(db, schema, { tenantId, unitId });
+        if (clash) {
+          return res.status(409).json({
+            error: 'This serial has a current or upcoming booking. Cancel that booking before retiring it.',
+          });
+        }
+      }
+      const { rows } = await db.query(
+        `UPDATE ${schema}.inventory_units
+            SET ${setParts.join(', ')}
+          WHERE id = $1 AND sku_id = $2 AND tenant_id = $3
+          RETURNING id, sku_id, serial_number, nickname, status, notes, created_at`,
+        params
+      );
+      if (!rows[0]) {
+        return res.status(404).json({ error: 'Unit not found' });
+      }
+      res.json({ unit: rows[0], schema });
+    } catch (err) {
+      if (err && err.code === '23505') {
+        return res.status(409).json({ error: 'serial_number already exists for this SKU' });
+      }
+      req.log?.error?.({ err }, 'unit patch failed');
+      res.status(500).json({ error: 'Failed to update unit' });
     }
   });
 
@@ -429,10 +580,10 @@ export function inventoryRoutes(ctx) {
           const free = [];
           for (const unit of locked.rows) {
             const clash = await client.query(
-              `SELECT id FROM ${schema}.inventory_reservations
-                WHERE unit_id = $1 AND tenant_id = $2
+              `SELECT r.id FROM ${schema}.inventory_reservations r
+                WHERE r.unit_id = $1 AND r.tenant_id = $2
                   AND ${BLOCKING}
-                  AND starts_on <= $4::date AND ends_on >= $3::date
+                  AND r.starts_on <= $4::date AND r.ends_on >= $3::date
                 LIMIT 1`,
               [unit.id, tenantId, startsOn, endsOn]
             );
@@ -451,10 +602,10 @@ export function inventoryRoutes(ctx) {
         const holds = [];
         for (const unit of targets) {
           const clash = await client.query(
-            `SELECT id FROM ${schema}.inventory_reservations
-              WHERE unit_id = $1 AND tenant_id = $2
+            `SELECT r.id FROM ${schema}.inventory_reservations r
+              WHERE r.unit_id = $1 AND r.tenant_id = $2
                 AND ${BLOCKING}
-                AND starts_on <= $4::date AND ends_on >= $3::date
+                AND r.starts_on <= $4::date AND r.ends_on >= $3::date
               LIMIT 1`,
             [unit.id, tenantId, startsOn, endsOn]
           );
