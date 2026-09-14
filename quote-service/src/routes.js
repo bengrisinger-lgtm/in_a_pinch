@@ -1,8 +1,14 @@
 import { Router } from 'express';
-import { ensureQuoteTables } from './schema.js';
+import {
+  ensureQuoteTables,
+  expireStaleHolds,
+  extendQuoteHolds,
+  HOLD_TTL_SIGNING_MINUTES,
+  HOLD_TTL_UNPAID_SIGNED_MINUTES,
+} from './schema.js';
 import { wrapWithTenant, withTenantTransaction } from './pool.js';
 import { deliveryFeeFromOneWay } from './delivery.js';
-import { applyPaidQuote } from './paid.js';
+import { applyPaidQuote, applyRefundedQuote } from './paid.js';
 import { dollarsToCents } from './square.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -295,7 +301,8 @@ export function quoteRoutes(ctx) {
         ...result,
         schema: schemaName,
         renter_magic_link: null,
-        hold_ttl_note: 'Holds stay held until paid or the 2-hour TTL. Square or staff mark-paid confirms them.',
+        hold_ttl_note:
+          'Cart holds last 15 minutes. After send they last 2 hours. After both sign, unpaid holds last 24 hours. Paid bookings do not expire.',
       });
     } catch (err) {
       if (err.status === 409) {
@@ -399,13 +406,31 @@ export function quoteRoutes(ctx) {
 
   router.get('/', async (req, res) => {
     try {
-      const { schema, db } = await scoped(req);
+      const { tenantId, schema, db } = await scoped(req);
+      await expireStaleHolds(db, schema, tenantId);
+      const q = clip(req.query?.q, 80);
+      const like = q ? `%${q.replace(/[%_]/g, '')}%` : null;
       const { rows } = await db.query(
-        `SELECT id, customer_id, status, delivery_fee, subtotal, total,
-                document_id, envelope_id, created_at
-           FROM ${schema}.quotes
-          ORDER BY created_at DESC
-          LIMIT 100`
+        `SELECT q.id, q.customer_id, q.status, q.delivery_fee, q.subtotal, q.total,
+                q.document_id, q.envelope_id, q.fulfillment, q.starts_on::text AS starts_on,
+                q.ends_on::text AS ends_on, q.created_at,
+                q.customer_signing_token, q.staff_signing_token,
+                q.payment_link_url, q.payment_link_id,
+                c.name AS customer_name, c.email AS customer_email,
+                (SELECT MIN(r.held_until)
+                   FROM ${schema}.inventory_reservations r
+                  WHERE r.quote_id = q.id
+                    AND r.tenant_id = q.tenant_id
+                    AND r.status = 'held') AS held_until
+           FROM ${schema}.quotes q
+           JOIN ${schema}.customers c
+             ON c.id = q.customer_id AND c.tenant_id = q.tenant_id
+          WHERE ($1::text IS NULL
+             OR c.name ILIKE $1
+             OR c.email ILIKE $1)
+          ORDER BY q.created_at DESC
+          LIMIT 100`,
+        [like]
       );
       res.json({ quotes: rows, schema });
     } catch (err) {
@@ -427,6 +452,8 @@ export function quoteRoutes(ctx) {
       typeof req.body?.envelope_id === 'string' && UUID_RE.test(req.body.envelope_id.trim())
         ? req.body.envelope_id.trim()
         : null;
+    const customerToken = clip(req.body?.customer_signing_token, 500);
+    const staffToken = clip(req.body?.staff_signing_token, 500);
     if (!documentId && !envelopeId) {
       return res.status(400).json({ error: 'document_id or envelope_id is required' });
     }
@@ -436,14 +463,21 @@ export function quoteRoutes(ctx) {
         `UPDATE ${schema}.quotes
             SET document_id = COALESCE($3, document_id),
                 envelope_id = COALESCE($4, envelope_id),
+                customer_signing_token = COALESCE($5, customer_signing_token),
+                staff_signing_token = COALESCE($6, staff_signing_token),
+                status = CASE WHEN $4 IS NOT NULL AND status = 'draft' THEN 'signing' ELSE status END,
                 updated_at = now()
           WHERE id = $1 AND tenant_id = $2
           RETURNING id, customer_id, status, document_id, envelope_id,
-                    delivery_fee, subtotal, total, fulfillment, created_at`,
-        [req.params.id, tenantId, documentId, envelopeId]
+                    delivery_fee, subtotal, total, fulfillment, created_at,
+                    customer_signing_token, staff_signing_token`,
+        [req.params.id, tenantId, documentId, envelopeId, customerToken, staffToken]
       );
       if (!rows[0]) {
         return res.status(404).json({ error: 'Quote not found' });
+      }
+      if (envelopeId) {
+        await extendQuoteHolds(db, schema, tenantId, req.params.id, HOLD_TTL_SIGNING_MINUTES);
       }
       res.json({ quote: rows[0], schema });
     } catch (err) {
@@ -455,6 +489,7 @@ export function quoteRoutes(ctx) {
   router.get('/:id', async (req, res) => {
     try {
       const { tenantId, schema, db } = await scoped(req);
+      await expireStaleHolds(db, schema, tenantId);
       const quote = await db.query(
         `SELECT * FROM ${schema}.quotes WHERE id = $1 AND tenant_id = $2`,
         [req.params.id, tenantId]
@@ -488,6 +523,120 @@ export function quoteRoutes(ctx) {
     }
   });
 
+  router.post('/:id/cancel', async (req, res) => {
+    const tenantId = hmacTenantId(req);
+    if (!UUID_RE.test(req.params.id)) {
+      return res.status(400).json({ error: 'id must be a UUID' });
+    }
+    try {
+      const { schema, db } = await scoped(req);
+      const found = await db.query(
+        `SELECT id, status, total, envelope_id FROM ${schema}.quotes WHERE id = $1 AND tenant_id = $2`,
+        [req.params.id, tenantId]
+      );
+      if (!found.rows[0]) {
+        return res.status(404).json({ error: 'Quote not found' });
+      }
+      if (found.rows[0].status === 'refunded' || found.rows[0].status === 'cancelled') {
+        return res.json({ quote: found.rows[0], schema, refund: null });
+      }
+      if (found.rows[0].status === 'paid') {
+        const paid = await db.query(
+          `SELECT id, amount, method, external_id
+             FROM ${schema}.payments
+            WHERE quote_id = $1 AND tenant_id = $2 AND status = 'paid'
+            ORDER BY created_at DESC
+            LIMIT 1`,
+          [req.params.id, tenantId]
+        );
+        const amount = money(paid.rows[0]?.amount, null) ?? money(found.rows[0].total, 0);
+        const amountCents = dollarsToCents(amount);
+        let refund = { refunded: false, reason: 'staff_recorded' };
+        if (typeof ctx.square?.refundPayment === 'function' && amountCents != null) {
+          refund = await ctx.square.refundPayment(tenantId, {
+            paymentId: paid.rows[0]?.external_id || null,
+            note: req.params.id,
+            amountCents,
+            idempotencyKey: `refund-${req.params.id}`,
+            reason: 'Staff cancelled the rental order',
+          });
+        }
+        const result = await withTenantTransaction(pool, tenantId, async (client) =>
+          applyRefundedQuote(client, {
+            schema,
+            tenantId,
+            quoteId: req.params.id,
+            amount: amount || 0,
+            method: refund.refunded ? 'square_refund' : 'staff_refund',
+            externalId: refund.id || paid.rows[0]?.external_id || null,
+            recordedBy: req.identity.userId,
+          })
+        );
+        return res.json({
+          quote: { ...result.quote, envelope_id: found.rows[0].envelope_id || null },
+          payment: result.payment,
+          refund,
+          schema,
+        });
+      }
+      await db.query(
+        `UPDATE ${schema}.inventory_reservations
+            SET status = 'cancelled'
+          WHERE tenant_id = $1 AND quote_id = $2 AND status IN ('held', 'confirmed')`,
+        [tenantId, req.params.id]
+      );
+      const { rows } = await db.query(
+        `UPDATE ${schema}.quotes
+            SET status = 'cancelled', updated_at = now()
+          WHERE id = $1 AND tenant_id = $2
+          RETURNING id, status, envelope_id`,
+        [req.params.id, tenantId]
+      );
+      res.json({ quote: rows[0], schema, refund: null });
+    } catch (err) {
+      req.log?.error?.({ err }, 'quote cancel failed');
+      res.status(500).json({ error: 'Failed to cancel quote' });
+    }
+  });
+
+  router.post('/:id/awaiting-payment', async (req, res) => {
+    const tenantId = hmacTenantId(req);
+    if (!UUID_RE.test(req.params.id)) {
+      return res.status(400).json({ error: 'id must be a UUID' });
+    }
+    try {
+      const { schema, db } = await scoped(req);
+      const found = await db.query(
+        `SELECT id, status FROM ${schema}.quotes WHERE id = $1 AND tenant_id = $2`,
+        [req.params.id, tenantId]
+      );
+      if (!found.rows[0]) {
+        return res.status(404).json({ error: 'Quote not found' });
+      }
+      if (found.rows[0].status === 'paid') {
+        return res.status(409).json({ error: 'Quote is already paid' });
+      }
+      if (found.rows[0].status === 'cancelled') {
+        return res.status(409).json({ error: 'Quote is cancelled' });
+      }
+      if (found.rows[0].status === 'awaiting_payment') {
+        return res.json({ quote: found.rows[0], schema });
+      }
+      await extendQuoteHolds(db, schema, tenantId, req.params.id, HOLD_TTL_UNPAID_SIGNED_MINUTES);
+      const { rows } = await db.query(
+        `UPDATE ${schema}.quotes
+            SET status = 'awaiting_payment', updated_at = now()
+          WHERE id = $1 AND tenant_id = $2
+          RETURNING id, status`,
+        [req.params.id, tenantId]
+      );
+      res.json({ quote: rows[0], schema });
+    } catch (err) {
+      req.log?.error?.({ err }, 'awaiting-payment failed');
+      res.status(500).json({ error: 'Failed to extend hold after signature' });
+    }
+  });
+
   router.post('/:id/payment-link', async (req, res) => {
     const tenantId = hmacTenantId(req);
     if (!UUID_RE.test(req.params.id)) {
@@ -505,7 +654,7 @@ export function quoteRoutes(ctx) {
     try {
       const { schema, db } = await scoped(req);
       const found = await db.query(
-        `SELECT q.id, q.status, q.total, c.email
+        `SELECT q.id, q.status, q.total, q.payment_link_url, q.payment_link_id, c.email
            FROM ${schema}.quotes q
            JOIN ${schema}.customers c
              ON c.id = q.customer_id AND c.tenant_id = q.tenant_id
@@ -516,8 +665,16 @@ export function quoteRoutes(ctx) {
       if (!quote) {
         return res.status(404).json({ error: 'Quote not found' });
       }
-      if (quote.status === 'paid') {
+      if (quote.status === 'paid' || quote.status === 'refunded') {
         return res.status(409).json({ error: 'Quote is already paid' });
+      }
+      if (quote.payment_link_url) {
+        return res.status(200).json({
+          url: quote.payment_link_url,
+          id: quote.payment_link_id,
+          quote_id: quote.id,
+          amount_cents: dollarsToCents(quote.total),
+        });
       }
       const amountCents = dollarsToCents(quote.total);
       if (amountCents == null) {
@@ -534,6 +691,12 @@ export function quoteRoutes(ctx) {
         buyerEmail: quote.email,
         paymentNote: quote.id,
       });
+      await db.query(
+        `UPDATE ${schema}.quotes
+            SET payment_link_url = $3, payment_link_id = $4, square_order_id = $5, updated_at = now()
+          WHERE id = $1 AND tenant_id = $2`,
+        [req.params.id, tenantId, link.url, link.id, link.order_id || null]
+      );
       res.status(201).json({
         url: link.url,
         id: link.id,

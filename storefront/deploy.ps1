@@ -10,6 +10,7 @@
 #
 # Usage:
 #   cd micro-applications\in-a-pinch\storefront
+#   .\build-console-overlay.ps1   # IAP-branded /console/ overlay
 #   .\deploy.ps1
 #   .\deploy.ps1 -Build
 
@@ -79,6 +80,13 @@ app-resolver sees status=active (up to 60s cache).
 Write-Host "Uploading $DistDir → $BucketUri" -ForegroundColor Cyan
 gcloud storage rsync --recursive --delete-unmatched-destination-objects $DistDir $BucketUri
 if ($LASTEXITCODE -ne 0) { throw "gcloud storage rsync failed" }
+
+$ConsoleOverlay = Join-Path $ScriptRoot "console-dist"
+if (Test-Path (Join-Path $ConsoleOverlay "index.html")) {
+    Write-Host "Re-applying /console/ overlay (hub rsync --delete would drop it)" -ForegroundColor Cyan
+    gcloud storage rsync --recursive --delete-unmatched-destination-objects $ConsoleOverlay "$BucketUri/console"
+    if ($LASTEXITCODE -ne 0) { throw "gcloud storage rsync console overlay failed" }
+}
 
 Write-Host ""
 Write-Host "Uploaded. Public URL after Applications → Deploy:" -ForegroundColor Green

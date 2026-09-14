@@ -1,9 +1,12 @@
+import { tenantConsoleHref } from '../lib/consoleHref';
+
 type Tile = {
   href?: string;
   title: string;
   body: string;
   tag: string;
   later?: boolean;
+  external?: boolean;
 };
 
 const TILES: Tile[] = [
@@ -18,6 +21,19 @@ const TILES: Tile[] = [
     tag: 'Live',
     title: 'Inventory',
     body: 'Add SKUs and serials. Same stock the catalog and calendar read.',
+  },
+  {
+    href: '#orders',
+    tag: 'Live',
+    title: 'Orders',
+    body: 'Reopen signing links, cancel an order, or release a hold.',
+  },
+  {
+    href: tenantConsoleHref(),
+    tag: 'Live',
+    title: 'Vault',
+    body: 'Documents, signatures, branding, domain, integrations, credentials, and automations.',
+    external: true,
   },
   {
     tag: 'Later',
@@ -53,9 +69,10 @@ export default function HubHome({ email }: Props) {
       <p className="eyebrow">Staff hub</p>
       <h1>Where you work after sign-in.</h1>
       <p className="muted hub-lead">
-        Signed in as {email}. Rentals and inventory are live. The rest of these
-        desks land here as we build them — not a second login, and not the
-        public site.
+        Signed in as {email}. Rentals and inventory are live. Vault is the
+        company console (documents, signatures, branding, domain). The rest of
+        these desks land here as we build them — not a second login, and not
+        the public site.
       </p>
       <div className="hub-grid">
         {TILES.map((tile) =>
@@ -66,7 +83,12 @@ export default function HubHome({ email }: Props) {
               <p>{tile.body}</p>
             </div>
           ) : (
-            <a key={tile.title} className="hub-tile" href={tile.href}>
+            <a
+              key={tile.title}
+              className="hub-tile"
+              href={tile.href}
+              {...(tile.external ? { rel: 'noopener noreferrer' } : {})}
+            >
               <span className="tag">{tile.tag}</span>
               <h2>{tile.title}</h2>
               <p>{tile.body}</p>

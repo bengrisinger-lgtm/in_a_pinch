@@ -167,8 +167,9 @@ export default function CatalogPage({ email, cart, setCart }: Props) {
         </div>
 
         <p className="banner">
-          Signed in as staff. Add-to-cart places a 2-hour hold on those serials. Checkout is details,
-          kit agreement on the signer app, then Square — no card fields here.
+          Signed in as staff. Add-to-cart places a 15-minute hold on those serials. After they
+          start signing it lasts 2 hours; after both sign, unpaid holds last 24 hours. Checkout is
+          details, kit agreement on the signer app, then Square — no card fields here.
         </p>
         {error ? <p className="banner error">{error}</p> : null}
 

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { createApp } from '../src/app.js';
-import { schemaNameFromTenantId, HOLD_TTL_HOURS } from '../src/schema.js';
+import { schemaNameFromTenantId, HOLD_TTL_CART_MINUTES } from '../src/schema.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TENANT_A = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
@@ -162,7 +162,7 @@ function makePool() {
     }
 
     if (compact.includes('INSERT INTO') && compact.includes('.inventory_reservations')) {
-      const hours = Number(params[6]) || HOLD_TTL_HOURS;
+      const minutes = Number(params[6]) || HOLD_TTL_CART_MINUTES;
       const row = {
         id: randomUUID(),
         unit_id: params[1],
@@ -171,7 +171,7 @@ function makePool() {
         starts_on: params[4],
         ends_on: params[5],
         status: 'held',
-        held_until: new Date(Date.now() + hours * 3600 * 1000).toISOString(),
+        held_until: new Date(Date.now() + minutes * 60 * 1000).toISOString(),
         created_at: new Date().toISOString(),
         tenant_id: params[0],
       };
@@ -390,10 +390,10 @@ after(async () => {
 });
 
 describe('serial inventory HMAC scope', () => {
-  it('hold TTL is two hours, not indefinite', () => {
-    assert.equal(HOLD_TTL_HOURS, 2);
+  it('cart hold TTL is 15 minutes, not indefinite', () => {
+    assert.equal(HOLD_TTL_CART_MINUTES, 15);
     const src = fs.readFileSync(path.join(__dirname, '../src/inventory.js'), 'utf8');
-    assert.match(src, /now\(\) \+ \(\$7::int \* interval '1 hour'\)/);
+    assert.match(src, /now\(\) \+ \(\$7::int \* interval '1 minute'\)/);
     assert.match(src, /r\.held_until > now\(\)/);
     assert.match(
       src,
@@ -459,7 +459,7 @@ describe('serial inventory HMAC scope', () => {
     });
     assert.equal(hold.status, 201);
     const holdBody = await hold.json();
-    assert.equal(holdBody.hold_ttl_hours, 2);
+    assert.equal(holdBody.hold_ttl_minutes, 15);
     assert.equal(holdBody.hold.status, 'held');
     assert.ok(holdBody.hold.held_until);
 
@@ -556,7 +556,7 @@ describe('serial inventory HMAC scope', () => {
     assert.equal(row.units_total, 2);
     assert.equal(row.units_available, 1);
     assert.equal(row.band, 'low');
-    assert.equal(body.hold_ttl_hours, 2);
+    assert.equal(body.hold_ttl_minutes, 15);
   });
 
   it('month calendar returns per-day bands for a SKU', async () => {
@@ -579,7 +579,7 @@ describe('serial inventory HMAC scope', () => {
     assert.equal(body.units_total, 1);
     assert.equal(body.days.length, 31);
     assert.equal(body.days[0].date, '2026-10-01');
-    assert.equal(body.hold_ttl_hours, 2);
+    assert.equal(body.hold_ttl_minutes, 15);
   });
 });
 

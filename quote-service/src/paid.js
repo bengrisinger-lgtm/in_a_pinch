@@ -83,3 +83,27 @@ export async function applyPaidQuote(client, { schema, tenantId, quoteId, amount
 
   return { quote: { ...quote.rows[0], status: 'paid' }, payment: pay.rows[0], alreadyPaid: false };
 }
+
+/** Release holds and mark the quote refunded after a paid cancel. */
+export async function applyRefundedQuote(client, { schema, tenantId, quoteId, amount, method, externalId, recordedBy }) {
+  await client.query(
+    `UPDATE ${schema}.inventory_reservations
+        SET status = 'cancelled'
+      WHERE tenant_id = $1 AND quote_id = $2 AND status IN ('held', 'confirmed')`,
+    [tenantId, quoteId]
+  );
+  const pay = await client.query(
+    `INSERT INTO ${schema}.payments
+       (tenant_id, quote_id, amount, status, method, external_id, recorded_by)
+     VALUES ($1,$2,$3,'refunded',$4,$5,$6)
+     RETURNING id, amount, status, method, external_id, created_at`,
+    [tenantId, quoteId, amount, method, externalId, recordedBy]
+  );
+  await client.query(
+    `UPDATE ${schema}.quotes
+        SET status = 'refunded', updated_at = now()
+      WHERE id = $1 AND tenant_id = $2`,
+    [quoteId, tenantId]
+  );
+  return { quote: { id: quoteId, status: 'refunded' }, payment: pay.rows[0] };
+}

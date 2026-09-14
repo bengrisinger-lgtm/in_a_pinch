@@ -39,6 +39,9 @@ describe('square helpers', () => {
     assert.equal(body.quick_pay.price_money.amount, 1250);
     assert.match(json, /square|payment_note|quick_pay/i);
     assert.doesNotMatch(json, /card_number|cvv|pan|1234 5678/i);
+    assert.equal(body.checkout_options.accepted_payment_methods.apple_pay, true);
+    assert.equal(body.checkout_options.accepted_payment_methods.google_pay, true);
+    assert.equal(body.checkout_options.accepted_payment_methods.cash_app_pay, true);
   });
 
   it('uses vaulted credential then Square locations + payment-links', async () => {

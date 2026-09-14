@@ -53,9 +53,17 @@ export function paymentLinkBody({
     },
   };
   if (paymentNote) body.payment_note = paymentNote;
-  const checkout = {};
+  const checkout = {
+    // Square-hosted page. Cards are always on. Wallets + Cash App via Checkout API.
+    // ACH and PayPal/Venmo are not Payment Link methods (Web Payments SDK / PayPal).
+    accepted_payment_methods: {
+      apple_pay: true,
+      google_pay: true,
+      cash_app_pay: true,
+    },
+  };
   if (redirectUrl) checkout.redirect_url = redirectUrl;
-  if (Object.keys(checkout).length) body.checkout_options = checkout;
+  body.checkout_options = checkout;
   if (buyerEmail) body.pre_populated_data = { buyer_email: buyerEmail };
   return body;
 }
@@ -159,6 +167,72 @@ export async function createSquarePaymentLink({
   };
 }
 
+export async function findSquarePaymentByNote({
+  accessToken,
+  apiBase,
+  fetchImpl,
+  note,
+}) {
+  const needle = String(note || '').trim();
+  if (!needle) return null;
+  const res = await fetchImpl(`${apiBase}/v2/payments?limit=100&sort_order=DESC`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Square-Version': SQUARE_VERSION,
+      Accept: 'application/json',
+    },
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error('Square payments could not be listed');
+    err.status = 502;
+    throw err;
+  }
+  const list = Array.isArray(body.payments) ? body.payments : [];
+  return (
+    list.find(
+      (p) =>
+        p &&
+        p.id &&
+        p.status === 'COMPLETED' &&
+        (p.note === needle || (typeof p.note === 'string' && p.note.includes(needle)))
+    ) || null
+  );
+}
+
+export async function refundSquarePayment({
+  accessToken,
+  apiBase,
+  fetchImpl,
+  paymentId,
+  amountCents,
+  idempotencyKey,
+  reason,
+}) {
+  const res = await fetchImpl(`${apiBase}/v2/refunds`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Square-Version': SQUARE_VERSION,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({
+      idempotency_key: idempotencyKey,
+      payment_id: paymentId,
+      amount_money: { amount: amountCents, currency: 'USD' },
+      reason: reason || 'Rental cancelled',
+    }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || !body?.refund?.id) {
+    const err = new Error(body?.errors?.[0]?.detail || 'Square could not refund this payment');
+    err.status = 502;
+    throw err;
+  }
+  return { id: body.refund.id, status: body.refund.status || null };
+}
+
 export function createSquareRuntime({
   consoleServiceUrl,
   envAccessToken,
@@ -208,6 +282,33 @@ export function createSquareRuntime({
         locationId,
         ...opts,
       });
+    },
+
+    async refundPayment(tenantId, opts) {
+      const secret = await this.getAccessToken(tenantId);
+      let paymentId = opts.paymentId || null;
+      if (!paymentId && opts.note) {
+        const found = await findSquarePaymentByNote({
+          accessToken: secret.accessToken,
+          apiBase,
+          fetchImpl,
+          note: opts.note,
+        });
+        paymentId = found?.id || null;
+      }
+      if (!paymentId) {
+        return { refunded: false, reason: 'no_square_payment' };
+      }
+      const refund = await refundSquarePayment({
+        accessToken: secret.accessToken,
+        apiBase,
+        fetchImpl,
+        paymentId,
+        amountCents: opts.amountCents,
+        idempotencyKey: opts.idempotencyKey,
+        reason: opts.reason,
+      });
+      return { refunded: true, id: refund.id, status: refund.status };
     },
   };
 }

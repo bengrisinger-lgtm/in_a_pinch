@@ -71,7 +71,10 @@ Prefix `/api/v1/quotes`:
 
 - `POST /customers` `GET /customers`
 - `POST /` `GET /` `GET /:id`
-- `PATCH /:id` — store kit `document_id` / `envelope_id` (UUIDs only). HMAC tenant in `WHERE`. Ignores body `tenant_id`. Does not persist signing tokens.
+- `PATCH /:id` — store kit `document_id` / `envelope_id` (UUIDs only) and optional signing tokens so staff can reopen links. HMAC tenant in `WHERE`. Ignores body `tenant_id`.
+- `POST /:id/cancel` — cancel unpaid quote and release holds. Paid quotes refund (Square if a payment exists) then `refunded`.
+- `GET /?q=` — staff search by customer name or email.
+- `POST /:id/awaiting-payment` — after both kit signers finish; extends unpaid hold to 24 hours.
 - `POST /checkout` — staff: renter + pickup/delivery + attach holds. Delivery fee is four legs × $0.66/mi + $30/hr from one-way miles/minutes (Maps later). Ignores client `delivery_fee`. Does not confirm holds until paid. `renter_magic_link` is null until renter self-signup.
 - `POST /:id/payment-link` — Square Payment Link from **server** quote total. Redirects the renter/staff to Square. No PAN. Needs vaulted `square` credential (console-service reveal) after console-service is redeployed with `CONSOLE_CREDENTIAL_REVEAL_ALLOWLIST`.
 - `POST /:id/payments` — staff mark-paid (default). Confirms attached holds and sets quote `paid`, then one-way copies the booking onto the connected calendar. Response includes `calendar: { pushed, reason?, provider?, eventId? }`. Webhooks are later (V11-011). Calendar failure does **not** un-pay.
@@ -83,7 +86,7 @@ Inventory (prefix `/api/v1/quotes/inventory`):
 - `GET /availability?sku_id=&starts_on=&ends_on=` — N of M plus per-serial free/busy
 - `GET /skus?starts_on=&ends_on=` — catalog list with `units_available` + `band` for those dates
 - `GET /calendar?sku_id=&year=&month=` — per-day plenty / limited / fully booked
-- `POST /holds` — `{ unit_id }` or `{ sku_id, quantity }` + dates. Hold TTL 2 hours.
+- `POST /holds` — `{ unit_id }` or `{ sku_id, quantity }` + dates. Cart hold 15 minutes; 2 hours after send; 24 hours after both sign if still unpaid. Paid bookings do not expire.
 - `POST /holds/:id/confirm` (paid / committed) `POST /holds/:id/cancel`
 
 Delivery miles / drive time / fee are columns on the quote. Maps pricing

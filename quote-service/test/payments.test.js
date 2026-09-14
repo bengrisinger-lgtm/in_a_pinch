@@ -38,6 +38,8 @@ function makePool({ quoteStatus = 'draft', holdStatus = 'held', heldUntil = '209
             id: QUOTE_ID,
             status: quoteStatus,
             total: 50,
+            payment_link_url: null,
+            payment_link_id: null,
             email: 'alex@example.com',
             starts_on: '2026-09-12',
             ends_on: '2026-09-13',

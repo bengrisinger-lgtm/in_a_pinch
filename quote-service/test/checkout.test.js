@@ -169,6 +169,9 @@ describe('POST /api/v1/quotes/checkout', () => {
     assert.equal(Number(body.quote.delivery_fee), 0);
     assert.equal(body.quote.fulfillment, 'pickup');
     assert.equal(body.renter_magic_link, null);
+    assert.match(body.hold_ttl_note, /15 minutes/);
+    assert.match(body.hold_ttl_note, /2 hours/);
+    assert.match(body.hold_ttl_note, /24 hours/);
     const insert = pool.calls.find((c) => c.sql.includes('INSERT INTO') && c.sql.includes('.quotes') && !c.sql.includes('quote_line'));
     assert.equal(insert.params[0], TENANT_A);
     await new Promise((r) => server.close(r));

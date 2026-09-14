@@ -18,6 +18,8 @@ type Props = {
   customerEmail: string;
   staffName: string;
   staffEmail: string;
+  paymentUrl?: string | null;
+  onEnsurePaymentUrl?: () => Promise<string>;
   sending: boolean;
   error: string | null;
   sent: SentAgreement | null;
@@ -32,6 +34,8 @@ export default function AgreementPanel({
   customerEmail,
   staffName,
   staffEmail,
+  paymentUrl,
+  onEnsurePaymentUrl,
   sending,
   error,
   sent,
@@ -130,6 +134,10 @@ export default function AgreementPanel({
     onError(null);
     onBusy(true);
     try {
+      const payUrl = paymentUrl || (onEnsurePaymentUrl ? await onEnsurePaymentUrl() : '');
+      if (!payUrl) {
+        throw new Error('Could not create the Square payment link. Try Send again.');
+      }
       const result = await sendServiceAgreement({
         templateId,
         documentId: needsPdfPicker ? documentId : undefined,
@@ -137,6 +145,7 @@ export default function AgreementPanel({
         customerEmail,
         staffName,
         staffEmail,
+        paymentUrl: payUrl,
       });
       setCreated(result);
       await onSent(result);
@@ -166,10 +175,11 @@ export default function AgreementPanel({
     <div>
       <h3>Service agreement</h3>
       <p className="muted">
-        Two kit signatures: Customer (the renter) and Staff (you, filled from this login). Place both
-        blocks under Signatures → Templates. Checkout does not stamp a signature without the kit
-        consent screen. Self-checkout later uses the same Staff role for the designated company
-        signer.
+        Two kit signatures: Customer (the renter) and Owner (Cadel Grisinger, emailed at
+        cadel@inapinchav.com). Place both blocks under Signatures → Templates. Checkout does not
+        stamp a signature without the kit consent screen. Send emails the renter one invite with
+        the signing link and the Square pay URL — you do not send a second payment email. You can
+        reopen either link from Orders after you leave this screen.
       </p>
       {shown ? (
         <div className="summary">
@@ -178,8 +188,8 @@ export default function AgreementPanel({
           </p>
           <p className="muted">
             {shown.customerInviteSent
-              ? `Customer invite emailed to ${shown.customerEmail}.`
-              : `Customer invite did not send (${shown.customerInviteFailure || 'unknown'}). Use their link.`}
+              ? `Customer invite emailed to ${shown.customerEmail}. That email includes the Square payment link — no extra send.`
+              : `Customer invite did not send (${shown.customerInviteFailure || 'unknown'}). Use their signing link, then the payment link from Orders.`}
           </p>
           <p>
             <a href={shown.customerSigningUrl} target="_blank" rel="noopener noreferrer">
@@ -187,12 +197,15 @@ export default function AgreementPanel({
             </a>
           </p>
           <p className="muted">
-            Sign now as {shown.staffEmail}. That is your Staff block — the kit still records consent.
-            {shown.staffInviteSent ? '' : ` Staff invite email skipped (${shown.staffInviteFailure || 'unknown'}).`}
+            {shown.staffInviteSent
+              ? `Owner invite emailed to ${shown.staffEmail} (${staffName}).`
+              : `Owner invite did not send (${shown.staffInviteFailure || 'unknown'}). Use Cadel’s link.`}
+            {' '}
+            Do not sign as Cadel unless you are Cadel — the kit records consent on that name.
           </p>
           <p>
             <a href={shown.staffSigningUrl} target="_blank" rel="noopener noreferrer">
-              Sign as staff now
+              Open Cadel&apos;s signing link
             </a>
           </p>
           {error ? <p className="error">{error}</p> : null}
@@ -284,11 +297,11 @@ export default function AgreementPanel({
               <input value={customerEmail} readOnly />
             </div>
             <div>
-              <label>Staff signer</label>
+              <label>Owner signer</label>
               <input value={staffName} readOnly />
             </div>
             <div>
-              <label>Staff email</label>
+              <label>Owner email</label>
               <input value={staffEmail} readOnly />
             </div>
           </div>

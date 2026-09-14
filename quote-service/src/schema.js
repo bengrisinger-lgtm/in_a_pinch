@@ -3,7 +3,7 @@
  *
  * Tables live in t_<hmac-tenant-uuid-hex> on the shared Postgres.
  * Not console-service. Not public. Kit holds PDFs and envelopes;
- * this store keeps UUIDs only. Holds expire in HOLD_TTL_HOURS.
+ * this store keeps UUIDs only. Cart holds expire in HOLD_TTL_CART_MINUTES.
  */
 
 const TENANT_SCHEMA_RE = /^t_[0-9a-f]{32}$/;
@@ -149,8 +149,56 @@ const TABLES = [
   },
 ];
 
-/** Checkout hold TTL. Confirmed (paid) bookings do not expire. */
-export const HOLD_TTL_HOURS = 2;
+/** Cart hold. Confirmed (paid) bookings do not expire. */
+export const HOLD_TTL_CART_MINUTES = 15;
+/** After the agreement is sent (signing in progress). */
+export const HOLD_TTL_SIGNING_MINUTES = 120;
+/** After both kit signers finished, still unpaid. */
+export const HOLD_TTL_UNPAID_SIGNED_MINUTES = 1440;
+/** @deprecated use HOLD_TTL_CART_MINUTES — kept so old tests/imports fail loudly */
+export const HOLD_TTL_HOURS = HOLD_TTL_CART_MINUTES / 60;
+
+export async function expireStaleHolds(db, schema, tenantId) {
+  await db.query(
+    `UPDATE ${schema}.inventory_reservations
+        SET status = 'cancelled'
+      WHERE tenant_id = $1
+        AND status = 'held'
+        AND held_until IS NOT NULL
+        AND held_until <= now()`,
+    [tenantId]
+  );
+  await db.query(
+    `UPDATE ${schema}.quotes
+        SET status = 'cancelled', updated_at = now()
+      WHERE tenant_id = $1
+        AND status NOT IN ('paid', 'cancelled', 'refunded')
+        AND id IN (
+          SELECT quote_id FROM ${schema}.inventory_reservations
+           WHERE tenant_id = $1 AND quote_id IS NOT NULL
+           GROUP BY quote_id
+          HAVING bool_and(status = 'cancelled')
+        )`,
+    [tenantId]
+  );
+}
+
+export async function extendQuoteHolds(db, schema, tenantId, quoteId, minutes) {
+  const mins = Number(minutes);
+  if (!Number.isInteger(mins) || mins < 1) {
+    throw new Error('hold minutes must be a positive integer');
+  }
+  const { rows } = await db.query(
+    `UPDATE ${schema}.inventory_reservations
+        SET held_until = now() + ($3::int * interval '1 minute')
+      WHERE tenant_id = $1
+        AND quote_id = $2
+        AND status = 'held'
+      RETURNING id, held_until`,
+    [tenantId, quoteId, mins]
+  );
+  return rows;
+}
 
 async function forceRls(db, qualified, table) {
   await db.query(`ALTER TABLE ${qualified} ENABLE ROW LEVEL SECURITY`);
@@ -193,6 +241,11 @@ export async function ensureQuoteTables(db, tenantId) {
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS calendar_push_status TEXT`);
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS calendar_push_error TEXT`);
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS calendar_pushed_at TIMESTAMPTZ`);
+  await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS customer_signing_token TEXT`);
+  await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS staff_signing_token TEXT`);
+  await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS payment_link_url TEXT`);
+  await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS payment_link_id TEXT`);
+  await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS square_order_id TEXT`);
   return { schema, tables: TABLES.map((t) => t.name) };
 }
 

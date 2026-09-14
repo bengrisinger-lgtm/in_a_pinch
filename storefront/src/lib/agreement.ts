@@ -2,11 +2,11 @@ import { PlatformError, type SignTemplate } from '@securedbackend/sdk';
 import { kit } from './kit';
 import {
   classifyIapSignerRoles,
-  staffDisplayName,
   whyTemplateNotReady,
   TEMPLATE_NEEDS_TWO_SIGNER_ROLES,
 } from './templateRoles.js';
 import { asTemplateList, isGenuineEmptyTemplateList, templateListShapeHint } from './templateList.js';
+import { COMPANY_SIGNER } from './companySigner.js';
 
 const READY = new Set(['materialized']);
 
@@ -94,6 +94,8 @@ export type SentAgreement = {
   documentId: string;
   customerSigningUrl: string;
   staffSigningUrl: string;
+  customerSigningToken: string;
+  staffSigningToken: string;
   customerEmail: string;
   staffEmail: string;
   customerInviteSent: boolean;
@@ -109,6 +111,7 @@ export async function sendServiceAgreement(input: {
   customerEmail: string;
   staffName: string;
   staffEmail: string;
+  paymentUrl?: string;
 }): Promise<SentAgreement> {
   const client = kit();
   const { template } = await client.signing.getTemplate(input.templateId);
@@ -121,13 +124,13 @@ export async function sendServiceAgreement(input: {
     throw new Error(TEMPLATE_NEEDS_TWO_SIGNER_ROLES);
   }
   const customerEmail = input.customerEmail.trim();
-  const staffEmail = input.staffEmail.trim();
-  if (!customerEmail || !staffEmail) {
-    throw new Error('Customer and staff emails are required to send the agreement.');
+  const staffEmail = COMPANY_SIGNER.email;
+  if (!customerEmail) {
+    throw new Error('Customer email is required to send the agreement.');
   }
   if (customerEmail.toLowerCase() === staffEmail.toLowerCase()) {
     throw new Error(
-      'Customer and staff must be different people. Use the renter’s email, not the logged-in staff email.'
+      'Customer and company signer must be different people. Use the renter’s email.'
     );
   }
   const documentId = template.document_id || input.documentId;
@@ -139,11 +142,19 @@ export async function sendServiceAgreement(input: {
     document_id: documentId,
     document_hash: await hashDocumentId(documentId),
     subject: 'Service agreement',
+    message: input.paymentUrl
+      ? `Please review and sign. After you sign, you will continue to payment. If you close that page, pay at ${input.paymentUrl}`
+      : 'Please review and sign the Service Agreement.',
     signers: [
-      { name: input.customerName.trim(), email: customerEmail, role_label: pair.customer },
       {
-        name: input.staffName.trim() || staffDisplayName(staffEmail),
-        email: staffEmail,
+        name: input.customerName.trim(),
+        email: customerEmail,
+        role_label: pair.customer,
+        ...(input.paymentUrl ? { post_sign_redirect_url: input.paymentUrl } : {}),
+      },
+      {
+        name: COMPANY_SIGNER.name,
+        email: COMPANY_SIGNER.email,
         role_label: pair.staff,
       },
     ],
@@ -159,6 +170,8 @@ export async function sendServiceAgreement(input: {
     documentId,
     customerSigningUrl: client.signing.signingUrl(customer.signing_url_token),
     staffSigningUrl: client.signing.signingUrl(staff.signing_url_token),
+    customerSigningToken: customer.signing_url_token,
+    staffSigningToken: staff.signing_url_token,
     customerEmail,
     staffEmail,
     customerInviteSent: customer.invite_sent,

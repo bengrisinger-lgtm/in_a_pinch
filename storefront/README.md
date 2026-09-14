@@ -2,7 +2,7 @@
 
 `https://hub.inapinchav.com` is the post-login staff home (same idea as LC hub). Public site staff sign-in is `https://auth.inapinchav.com/login`. Logged-out visits to hub redirect there. Do not treat hub as a second login page.
 
-After sign-in: **Rentals** (`#rentals`) is the date-aware catalog, calendar, and cart holds. **Inventory** (`#stock`) is SKU + serial. Photos, customers, reports, and marketing are listed on the hub as later desks — not wired yet.
+After sign-in: **Rentals** (`#rentals`) is the date-aware catalog, calendar, and cart holds. **Inventory** (`#stock`) is SKU + serial. **Vault** opens the tenant console (`VITE_CONSOLE_URL`, Documents / Signatures / Branding / Domain / Integrations). Photos, customers, reports, and marketing are listed on the hub as later desks — not wired yet.
 
 This is the IAP tenant app, not console-service. The session cookie is HttpOnly. API calls go through the gateway with `credentials: 'include'`. The kit (`createClient`) is used for session validate / logout only. Inventory is `fetch` to `/api/v1/quotes/inventory/*`. Never send `tenant_id` from the browser.
 
@@ -25,7 +25,10 @@ Opens `http://localhost:5174`. Login redirects to `VITE_AUTH_URL`. After login, 
 
 ## Live API
 
-`VITE_API_GATEWAY_URL=https://api.inapinchav.com`
+`VITE_API_GATEWAY_URL=https://api.inapinchav.com`  
+`VITE_SIGNER_URL=https://sign.symlavault.com` (kit invite host; `sign.inapinchav.com` is Application Not Found until a `sign` app exists)
+
+**Vault** is `https://hub.{apex}/console/index.html` on the same host (same cookie). Do not point it at `app.symlavault.com` — that kicks staff to `auth.symlavault.com/login` (`RECURRING-BUG-CLASSES.md` §19). The overlay uses IAP colors and a Hub / Rentals / Stock / Vault bar. Rebuild with `.\build-console-overlay.ps1` before `.\deploy.ps1` so hub rsync `--delete` does not drop `/console/`.
 
 Staff calls through `api.*` **401 until gateway HMAC cutover**. Do **not** deploy `api-gateway` until LC spokes verify the minted secret. The UI still talks to the correct path.
 

@@ -1,11 +1,15 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { CartLine } from '../pages/CatalogPage';
 import { formatUsd } from '../lib/dates';
 import { deliveryFeeFromOneWay } from '../lib/delivery';
+import { COMPANY_SIGNER } from '../lib/companySigner.js';
+import { kit } from '../lib/kit';
+import { cancelOrder } from '../lib/orderActions';
 import {
   checkout,
   createPaymentLink,
   markPaid,
+  markAwaitingPayment,
   attachEnvelope,
   type CalendarPush,
   type CheckoutQuote,
@@ -27,10 +31,10 @@ type Props = {
   startsOn: string;
   endsOn: string;
   nights: number;
-  staffEmail: string;
-  staffName: string;
   onClose: () => void;
   onRemove: (skuId: string) => void;
+  onReleaseAll: () => void;
+  onOrderCancelled: () => void;
 };
 
 export default function CartDrawer({
@@ -38,10 +42,10 @@ export default function CartDrawer({
   startsOn,
   endsOn,
   nights,
-  staffEmail,
-  staffName,
   onClose,
   onRemove,
+  onReleaseAll,
+  onOrderCancelled,
 }: Props) {
   const [panel, setPanel] = useState<1 | 2 | 3 | 4>(1);
   const [name, setName] = useState('');
@@ -72,6 +76,29 @@ export default function CartDrawer({
 
   const total = subtotal + deliveryPreview;
 
+  useEffect(() => {
+    if (!saved?.id || !saved.envelope_id || paid || saved.status === 'cancelled') return;
+    let cancelled = false;
+    async function tick() {
+      try {
+        const detail = await kit().signing.get(saved!.envelope_id as string);
+        if (cancelled) return;
+        if (detail.envelope.status === 'completed' && saved!.status !== 'awaiting_payment') {
+          const body = await markAwaitingPayment(saved!.id);
+          if (!cancelled) setSaved((q) => (q ? { ...q, status: body.quote.status } : q));
+        }
+      } catch {
+        // Poll is best-effort.
+      }
+    }
+    tick();
+    const id = window.setInterval(tick, 15000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [saved?.id, saved?.envelope_id, saved?.status, paid]);
+
   async function saveDetails(e: React.FormEvent) {
     e.preventDefault();
     if (!holdIds.length) {
@@ -93,7 +120,14 @@ export default function CartDrawer({
         one_way_minutes: fulfillment === 'delivery' ? Number(minutes) : undefined,
         hold_ids: holdIds,
       });
-      setSaved(body.quote);
+      let quote = body.quote;
+      try {
+        const pay = await createPaymentLink(quote.id, window.location.origin);
+        quote = { ...quote, payment_link_url: pay.url, payment_link_id: pay.id };
+      } catch {
+        // Agreement can still send; staff can mint the link from Orders.
+      }
+      setSaved(quote);
       setPanel(3);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save checkout');
@@ -136,9 +170,26 @@ export default function CartDrawer({
     const body = await attachEnvelope(saved.id, {
       document_id: sent.documentId,
       envelope_id: sent.envelopeId,
+      customer_signing_token: sent.customerSigningToken,
+      staff_signing_token: sent.staffSigningToken,
     });
     setSaved(body.quote);
     setAgreement(sent);
+  }
+
+  async function onCancelOrder() {
+    if (!saved) return;
+    if (!window.confirm('Cancel this order and release the holds on those serials?')) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await cancelOrder(saved.id, saved.envelope_id);
+      onOrderCancelled();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not cancel order');
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -164,22 +215,43 @@ export default function CartDrawer({
         </div>
 
         {saved && panel === 3 ? (
-          <AgreementPanel
-            customerName={name.trim()}
-            customerEmail={email.trim()}
-            staffName={staffName}
-            staffEmail={staffEmail}
-            sending={saving}
-            error={error}
-            sent={agreement}
-            onBusy={setSaving}
-            onError={setError}
-            onSent={onAgreementSent}
-            onContinue={() => {
-              setError(null);
-              setPanel(4);
-            }}
-          />
+          <>
+            <AgreementPanel
+              customerName={name.trim()}
+              customerEmail={email.trim()}
+              staffName={COMPANY_SIGNER.name}
+              staffEmail={COMPANY_SIGNER.email}
+              paymentUrl={saved.payment_link_url}
+              onEnsurePaymentUrl={async () => {
+                if (saved.payment_link_url) return saved.payment_link_url;
+                const pay = await createPaymentLink(saved.id, window.location.origin);
+                setSaved((q) =>
+                  q ? { ...q, payment_link_url: pay.url, payment_link_id: pay.id } : q
+                );
+                return pay.url;
+              }}
+              sending={saving}
+              error={error}
+              sent={agreement}
+              onBusy={setSaving}
+              onError={setError}
+              onSent={onAgreementSent}
+              onContinue={() => {
+                setError(null);
+                setPanel(4);
+              }}
+            />
+            <div className="actions">
+              <button
+                className="danger"
+                type="button"
+                disabled={saving}
+                onClick={() => void onCancelOrder()}
+              >
+                Cancel order and release holds
+              </button>
+            </div>
+          </>
         ) : null}
 
         {saved && (panel === 4 || paid) ? (
@@ -208,6 +280,19 @@ export default function CartDrawer({
             {saved.envelope_id ? (
               <p className="muted">Agreement envelope {saved.envelope_id}</p>
             ) : null}
+            {saved.payment_link_url && !paid ? (
+              <p>
+                <a href={saved.payment_link_url} target="_blank" rel="noopener noreferrer">
+                  Customer payment link
+                </a>
+                {' · '}
+                <a
+                  href={`mailto:${encodeURIComponent(email.trim())}?subject=${encodeURIComponent('Pay for your rental')}&body=${encodeURIComponent(saved.payment_link_url)}`}
+                >
+                  Email the renter
+                </a>
+              </p>
+            ) : null}
             {!paid ? (
               <>
                 <p className="muted">
@@ -226,6 +311,16 @@ export default function CartDrawer({
                   </button>
                   <button type="button" disabled={paying} onClick={recordPaid}>
                     Mark paid
+                  </button>
+                </div>
+                <div className="actions">
+                  <button
+                    className="danger"
+                    type="button"
+                    disabled={saving}
+                    onClick={() => void onCancelOrder()}
+                  >
+                    Cancel order and release holds
                   </button>
                 </div>
               </>
@@ -267,12 +362,20 @@ export default function CartDrawer({
               </div>
               {ttl ? (
                 <p className="muted">
-                  Holds expire around {new Date(ttl).toLocaleString()} (2-hour TTL).
+                  Cart hold until {new Date(ttl).toLocaleString()} (15 minutes before they
+                  sign). After send: 2 hours. After both sign, unpaid: 24 hours.
                 </p>
               ) : null}
             </div>
             <div className="actions">
-              <span />
+              <button
+                className="back"
+                type="button"
+                disabled={cart.length === 0}
+                onClick={onReleaseAll}
+              >
+                Release holds
+              </button>
               <button type="button" disabled={cart.length === 0} onClick={() => setPanel(2)}>
                 Continue
               </button>

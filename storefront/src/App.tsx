@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react';
 import type { CurrentUser } from './lib/kit';
 import { kit, redirectToLogin } from './lib/kit';
-import { staffDisplayName } from './lib/templateRoles.js';
+import { tenantConsoleHref } from './lib/consoleHref';
 import CartDrawer from './components/CartDrawer';
 import { spanDays } from './lib/dates';
 import { cancelHold } from './lib/inventoryApi';
 import CatalogPage, { type CartLine } from './pages/CatalogPage';
 import HubHome from './pages/HubHome';
+import OrdersPage from './pages/OrdersPage';
 import StockPage from './pages/StockPage';
 
-type View = 'home' | 'catalog' | 'stock';
+type View = 'home' | 'catalog' | 'stock' | 'orders';
 
 export default function App() {
   const [user, setUser] = useState<CurrentUser | null>(null);
@@ -93,7 +94,11 @@ export default function App() {
           <nav>
             <a href="#home">Hub</a>
             <a href="#rentals">Rentals</a>
+            <a href="#orders">Orders</a>
             <a href="#stock">Stock</a>
+            <a href={tenantConsoleHref()} rel="noopener noreferrer">
+              Vault
+            </a>
             <button className="linkish" type="button" onClick={onLogout}>
               Sign out
             </button>
@@ -109,6 +114,8 @@ export default function App() {
         <HubHome email={user.email} />
       ) : view === 'stock' ? (
         <StockPage email={user.email} />
+      ) : view === 'orders' ? (
+        <OrdersPage email={user.email} />
       ) : (
         <CatalogPage email={user.email} cart={cart} setCart={setCart} />
       )}
@@ -118,10 +125,18 @@ export default function App() {
           startsOn={cart[0]?.startsOn || ''}
           endsOn={cart[0]?.endsOn || ''}
           nights={cart[0] ? spanDays(cart[0].startsOn, cart[0].endsOn) : 1}
-          staffEmail={user.email}
-          staffName={staffDisplayName(user.email)}
           onClose={() => setCartOpen(false)}
           onRemove={removeLine}
+          onReleaseAll={() => {
+            void Promise.allSettled(cart.flatMap((line) => line.holdIds.map((id) => cancelHold(id))));
+            setCart([]);
+            setCartOpen(false);
+          }}
+          onOrderCancelled={() => {
+            setCart([]);
+            setCartOpen(false);
+            window.location.hash = '#orders';
+          }}
         />
       ) : null}
     </>
@@ -129,8 +144,9 @@ export default function App() {
 }
 
 function hashView(): View {
-  const hash = window.location.hash.replace(/^#/, '');
+  const hash = window.location.hash.replace(/^#/, '').split('?')[0];
   if (hash === 'stock') return 'stock';
+  if (hash === 'orders') return 'orders';
   if (hash === 'catalog' || hash === 'rentals') return 'catalog';
   return 'home';
 }

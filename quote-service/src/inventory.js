@@ -1,11 +1,16 @@
 /**
  * Serial inventory + IAP booking calendar.
- * Holds last HOLD_TTL_HOURS then stop blocking. Confirmed (paid) does not expire.
+ * Cart holds last HOLD_TTL_CART_MINUTES then stop blocking. Confirmed (paid) does not expire.
  * Cadel's Outlook/Google calendar is a later paid-event push, not this table.
  */
 
 import { Router } from 'express';
-import { schemaNameFromTenantId, ensureQuoteTables, HOLD_TTL_HOURS } from './schema.js';
+import {
+  schemaNameFromTenantId,
+  ensureQuoteTables,
+  expireStaleHolds,
+  HOLD_TTL_CART_MINUTES,
+} from './schema.js';
 import { wrapWithTenant, withTenantTransaction } from './pool.js';
 
 const UUID_RE =
@@ -156,6 +161,7 @@ export function inventoryRoutes(ctx) {
     }
     try {
       const { tenantId, schema, db } = await scoped(pool, req);
+      await expireStaleHolds(db, schema, tenantId);
       const { rows } = await db.query(
         `SELECT s.id, s.name, s.category, s.description, s.daily_rate, s.active, s.created_at,
                 (SELECT count(*)::int FROM ${schema}.inventory_units u
@@ -197,7 +203,7 @@ export function inventoryRoutes(ctx) {
         skus,
         starts_on: startsOn,
         ends_on: endsOn,
-        hold_ttl_hours: HOLD_TTL_HOURS,
+        hold_ttl_minutes: HOLD_TTL_CART_MINUTES,
         schema,
       });
     } catch (err) {
@@ -463,6 +469,7 @@ export function inventoryRoutes(ctx) {
     const monthEnd = isoDay(year, month, 0);
     try {
       const { schema, db } = await scoped(pool, req);
+      await expireStaleHolds(db, schema, tenantId);
       const sku = await db.query(
         `SELECT id, name FROM ${schema}.inventory_skus WHERE id = $1 AND tenant_id = $2`,
         [skuId, tenantId]
@@ -507,7 +514,7 @@ export function inventoryRoutes(ctx) {
         year,
         month,
         units_total: unitsTotal,
-        hold_ttl_hours: HOLD_TTL_HOURS,
+        hold_ttl_minutes: HOLD_TTL_CART_MINUTES,
         days,
         schema,
       });
@@ -618,7 +625,7 @@ export function inventoryRoutes(ctx) {
           const inserted = await client.query(
             `INSERT INTO ${schema}.inventory_reservations
                (tenant_id, unit_id, sku_id, quote_id, starts_on, ends_on, status, held_until, created_by)
-             VALUES ($1, $2, $3, $4, $5::date, $6::date, 'held', now() + ($7::int * interval '1 hour'), $8)
+             VALUES ($1, $2, $3, $4, $5::date, $6::date, 'held', now() + ($7::int * interval '1 minute'), $8)
              RETURNING id, unit_id, sku_id, quote_id, starts_on::text AS starts_on,
                        ends_on::text AS ends_on, status, held_until, created_at`,
             [
@@ -628,7 +635,7 @@ export function inventoryRoutes(ctx) {
               quoteId,
               startsOn,
               endsOn,
-              HOLD_TTL_HOURS,
+              HOLD_TTL_CART_MINUTES,
               req.identity.userId,
             ]
           );
@@ -639,7 +646,7 @@ export function inventoryRoutes(ctx) {
       res.status(201).json({
         holds: created,
         hold: created[0],
-        hold_ttl_hours: HOLD_TTL_HOURS,
+        hold_ttl_minutes: HOLD_TTL_CART_MINUTES,
         schema,
       });
     } catch (err) {
@@ -709,4 +716,4 @@ export function inventoryRoutes(ctx) {
   return router;
 }
 
-export { BLOCKING, HOLD_TTL_HOURS };
+export { BLOCKING, HOLD_TTL_CART_MINUTES };

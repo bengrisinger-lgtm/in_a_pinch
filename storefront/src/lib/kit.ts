@@ -6,6 +6,15 @@ function gatewayUrl(): string {
   return url.replace(/\/$/, '');
 }
 
+/** Public signer SPA. Invite email uses sign.{platform}; do not derive
+ *  sign.{apex} from api.{apex} — that host is Application Not Found
+ *  until the tenant provisions a `sign` app (same class as hub). */
+function signerUrl(): string {
+  const url = import.meta.env.VITE_SIGNER_URL;
+  if (!url) throw new Error('VITE_SIGNER_URL is required');
+  return url.replace(/\/$/, '');
+}
+
 export function authUrl(): string {
   const url = import.meta.env.VITE_AUTH_URL;
   if (!url) throw new Error('VITE_AUTH_URL is required');
@@ -17,7 +26,11 @@ function gatewayFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Res
 }
 
 export function kit(): PlatformClient {
-  return createClient({ baseUrl: gatewayUrl(), fetch: gatewayFetch });
+  return createClient({
+    baseUrl: gatewayUrl(),
+    signerBaseUrl: signerUrl(),
+    fetch: gatewayFetch,
+  });
 }
 
 export function redirectToLogin(): void {

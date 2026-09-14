@@ -36,6 +36,8 @@ export type CheckoutQuote = {
   delivery_address?: string | null;
   document_id?: string | null;
   envelope_id?: string | null;
+  payment_link_url?: string | null;
+  payment_link_id?: string | null;
 };
 
 export type CheckoutInput = {
@@ -94,11 +96,50 @@ export function markPaid(quoteId: string) {
 
 export function attachEnvelope(
   quoteId: string,
-  input: { document_id: string; envelope_id: string }
+  input: {
+    document_id: string;
+    envelope_id: string;
+    customer_signing_token?: string;
+    staff_signing_token?: string;
+  }
 ) {
   return quoteFetch<{ quote: CheckoutQuote }>(`/${quoteId}`, {
     method: 'PATCH',
     body: JSON.stringify(input),
+  });
+}
+
+export type StaffQuote = CheckoutQuote & {
+  customer_name?: string;
+  customer_email?: string;
+  customer_signing_token?: string | null;
+  staff_signing_token?: string | null;
+  held_until?: string | null;
+  created_at?: string;
+};
+
+export function listQuotes(query?: string) {
+  const q = query?.trim();
+  return quoteFetch<{ quotes: StaffQuote[] }>(q ? `/?q=${encodeURIComponent(q)}` : '/');
+}
+
+export function getQuote(quoteId: string) {
+  return quoteFetch<{ quote: StaffQuote; line_items: unknown[]; payments: unknown[] }>(
+    `/${quoteId}`
+  );
+}
+
+export function cancelQuote(quoteId: string) {
+  return quoteFetch<{ quote: { id: string; status: string; envelope_id?: string | null } }>(
+    `/${quoteId}/cancel`,
+    { method: 'POST', body: JSON.stringify({}) }
+  );
+}
+
+export function markAwaitingPayment(quoteId: string) {
+  return quoteFetch<{ quote: { id: string; status: string } }>(`/${quoteId}/awaiting-payment`, {
+    method: 'POST',
+    body: JSON.stringify({}),
   });
 }
 

@@ -1,0 +1,81 @@
+/* IAP vault overlay only. Do not copy into platform console-app. */
+:root {
+  --background: #fff8ee;
+  --foreground: #2b2526;
+  --card: #ffffff;
+  --card-foreground: #2b2526;
+  --popover: #ffffff;
+  --popover-foreground: #2b2526;
+  --primary: #963630;
+  --primary-foreground: #ffffff;
+  --secondary: #f5d6a3;
+  --secondary-foreground: #261c2b;
+  --muted: #f5d6a3;
+  --muted-foreground: #756861;
+  --accent: #f5d6a3;
+  --accent-foreground: #261c2b;
+  --border: #e8d7c6;
+  --input-background: #fff8ee;
+  --syml-plum: #963630;
+  --syml-teal: #e9632a;
+  --syml-teal-light: #efad45;
+  --syml-orange: #e9632a;
+}
+
+html,
+body,
+#root {
+  background: #fff8ee;
+  color: #2b2526;
+}
+
+.tenant-shell {
+  background: rgba(38, 28, 43, 0.98);
+  border-bottom: 3px solid #e9632a;
+  color: #fff;
+}
+
+.tenant-shell a {
+  color: #fff;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.tenant-shell a:hover {
+  color: #efad45;
+}
+
+.tenant-shell a[aria-current='page'] {
+  color: #efad45;
+}
+
+.tenant-shell-wordmark {
+  color: #fff;
+  font: 700 20px Georgia, serif;
+}
+
+.tenant-console-aside {
+  background: #261c2b !important;
+  border-right-color: #e9632a !important;
+  color: #fff8ee;
+}
+
+.tenant-console-aside .text-sm,
+.tenant-console-aside .font-semibold {
+  color: #fff8ee;
+}
+
+.tenant-console-aside .text-muted-foreground {
+  color: #f5d6a3 !important;
+}
+
+.tenant-console-aside button:hover {
+  background: rgba(233, 99, 42, 0.22) !important;
+  color: #fff !important;
+}
+
+.tenant-console-aside button.bg-accent {
+  background: #e9632a !important;
+  color: #fff !important;
+}
