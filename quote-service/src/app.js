@@ -1,7 +1,7 @@
 import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
-import { requireStaff } from './auth.js';
+import { requireStaff, requireTenant } from './auth.js';
 import { quoteRoutes } from './routes.js';
 import { inventoryRoutes } from './inventory.js';
 import { originAllowed } from './cors.js';
@@ -41,18 +41,20 @@ export function createApp({ pool, verify, expectedTenantId, allowedOrigins = [],
     res.json({ status: 'ok', service: 'quote-service' });
   });
 
-  const gated = requireStaff({ verify, expectedTenantId });
-  const inv = inventoryRoutes({ pool });
+  const tenant = requireTenant({ verify, expectedTenantId });
+  const staff = requireStaff({ verify, expectedTenantId });
+  const inv = inventoryRoutes({ pool, staff });
   const routes = quoteRoutes({
     pool,
+    staff,
     allowedOrigins,
     square,
     calendar,
   });
-  app.use('/api/v1/quotes/inventory', gated, inv);
-  app.use('/inventory', gated, inv);
-  app.use('/api/v1/quotes', gated, routes);
-  app.use('/', gated, routes);
+  app.use('/api/v1/quotes/inventory', tenant, inv);
+  app.use('/inventory', tenant, inv);
+  app.use('/api/v1/quotes', tenant, routes);
+  app.use('/', tenant, routes);
 
   return app;
 }

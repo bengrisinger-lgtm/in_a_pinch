@@ -189,4 +189,9 @@ export async function listAgreementTemplates(): Promise<SignTemplate[]> {
   throw new Error(`Kit returned no templates (${templateListShapeHint(page)})`);
 }
 
+export {
+  CONSUMER_AGREEMENT_UNAVAILABLE,
+  pickStandardRentalTemplate,
+} from './standardRentalTemplate.js';
+
 export type { SignTemplate };

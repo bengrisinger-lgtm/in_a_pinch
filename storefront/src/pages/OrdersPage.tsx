@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { COMPANY_SIGNER } from '../lib/companySigner.js';
-import { formatUsd } from '../lib/dates';
+import { formatPrettyTime, formatUsd, parseHm } from '../lib/dates';
 import { kit } from '../lib/kit';
 import { cancelOrder, signingHref } from '../lib/orderActions';
 import { tenantConsoleHref } from '../lib/consoleHref';
@@ -99,6 +99,7 @@ export default function OrdersPage({ email }: Props) {
     try {
       await cancelOrder(quote.id, quote.envelope_id);
       await refresh();
+      window.dispatchEvent(new Event('iap-catalog-refresh'));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not cancel order');
     } finally {
@@ -180,7 +181,11 @@ export default function OrdersPage({ email }: Props) {
                   <div className="muted">
                     {quote.customer_email || ''}
                     {quote.starts_on && quote.ends_on
-                      ? ` · ${quote.starts_on} → ${quote.ends_on}`
+                      ? ` · ${quote.starts_on}${
+                          parseHm(quote.load_in_time) ? ` ${formatPrettyTime(parseHm(quote.load_in_time)!)}` : ''
+                        } → ${quote.ends_on}${
+                          parseHm(quote.load_out_time) ? ` ${formatPrettyTime(parseHm(quote.load_out_time)!)}` : ''
+                        }`
                       : ''}
                   </div>
                 </div>

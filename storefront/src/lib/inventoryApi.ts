@@ -59,6 +59,7 @@ async function invFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
   const res = await fetch(`${BASE()}${path}`, {
     ...options,
     credentials: 'include',
+    cache: 'no-store',
     headers: {
       Accept: 'application/json',
       ...(options.body ? { 'Content-Type': 'application/json' } : {}),
@@ -142,6 +143,8 @@ export function createHolds(input: {
   quantity: number;
   starts_on: string;
   ends_on: string;
+  load_in_time: string;
+  load_out_time: string;
 }) {
   return invFetch<{ holds: Hold[]; hold_ttl_hours: number }>('/holds', {
     method: 'POST',

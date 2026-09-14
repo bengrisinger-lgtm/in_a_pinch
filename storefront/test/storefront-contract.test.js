@@ -20,9 +20,44 @@ describe('IAP storefront contract', () => {
   it('uses kit session cookies and does not collect cards or localStorage secrets', () => {
     const files = walk(path.join(root, 'src'));
     const blob = files.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
+    const appSrc = fs.readFileSync(path.join(root, 'src', 'App.tsx'), 'utf8');
+    const footerSrc = fs.readFileSync(
+      path.join(root, 'src', 'components', 'SiteFooter.tsx'),
+      'utf8'
+    );
     assert.match(blob, /createClient/);
     assert.match(blob, /credentials: 'include'/);
     assert.match(blob, /cache: 'no-store'/);
+    assert.match(blob, /hidden=\{staffTools && view !== 'catalog'\}/);
+    assert.match(blob, /isConsumerSurface/);
+    assert.match(blob, /staffHubHref/);
+    assert.match(blob, /staffTools/);
+    assert.match(blob, /pinch-logo\.png/);
+    assert.match(blob, /Professional gear without the giant rental-house price tag/);
+    const indexHtml = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+    assert.match(indexHtml, /In A Pinch AV \| Denver AV Rentals/);
+    assert.match(blob, /staffLoginHref\(staffHubHref\(\)\)/);
+    assert.match(fs.readFileSync(path.join(root, 'src', 'lib', 'kit.ts'), 'utf8'), /VITE_STOREFRONT_SURFACE/);
+    assert.ok(fs.existsSync(path.join(root, 'public', 'pinch-logo.png')));
+    const deploySrc = fs.readFileSync(path.join(root, 'deploy.ps1'), 'utf8');
+    assert.match(deploySrc, /coming-soon/);
+    assert.match(deploySrc, /Console overlay skipped on landing slug/);
+    assert.match(deploySrc, /AppSlug coming-soon/);
+    assert.doesNotMatch(deploySrc, /Do not upload to the landing bucket/);
+    assert.match(blob, /LOAD_OUT_POLICY/);
+    assert.match(blob, /load_in_time/);
+    assert.match(blob, /12:30 a.m. to 7:00 a.m/);
+    assert.match(blob, /coordinate a load-out time with the venue/);
+    assert.match(blob, /billingDays/);
+    assert.match(blob, /up to 24 hours/);
+    assert.match(blob, /range-start/);
+    assert.match(blob, /onPreview/);
+    assert.match(blob, /formatPrettyDate/);
+    assert.match(blob, /DateRangeCalendar/);
+    assert.doesNotMatch(blob, /Check Dates/);
+    assert.match(blob, /Pickup/);
+    assert.match(blob, /iap-catalog-refresh/);
+    assert.match(blob, /Keep the last good list/);
     assert.match(blob, /asTemplateList/);
     assert.match(blob, /tenantConsoleHref/);
     assert.match(blob, /\/console\/index\.html\?as=tenant/);
@@ -33,6 +68,30 @@ describe('IAP storefront contract', () => {
     assert.match(blob, /\/checkout/);
     assert.match(blob, /payment-link/);
     assert.match(blob, /Mark paid/);
+    assert.match(blob, /ensureStorefrontSession/);
+    assert.match(blob, /\/api\/v1\/auth\/guest/);
+    assert.match(footerSrc, /Staff sign in/);
+    assert.match(footerSrc, /className="site-footer"/);
+    assert.match(footerSrc, /Terms of Use/);
+    assert.match(footerSrc, /pages later/);
+    assert.match(footerSrc, /Privacy page not built yet/);
+    assert.doesNotMatch(appSrc, /Staff sign in/);
+    assert.match(blob, /No account required/);
+    assert.match(blob, /faster checkout is later/);
+    assert.match(blob, /Continue to agreement/);
+    assert.match(blob, /isStaffUser/);
+    const cartSrc = fs.readFileSync(path.join(root, 'src', 'components', 'CartDrawer.tsx'), 'utf8');
+    const agreementSrc = fs.readFileSync(
+      path.join(root, 'src', 'components', 'AgreementPanel.tsx'),
+      'utf8'
+    );
+    assert.match(cartSrc, /consumer=\{!isStaff\}/);
+    assert.match(agreementSrc, /if \(consumer\)/);
+    assert.match(blob, /pickStandardRentalTemplate/);
+    assert.match(blob, /We sent the Standard Rental Agreement/);
+    assert.match(blob, /Sending the Standard Rental Agreement/);
+    assert.match(agreementSrc, /Send for signature/);
+    assert.doesNotMatch(blob, /twilio|Twilio|SMS_MFA|verifySms|sms_code/i);
     assert.match(blob, /client\.signing/);
     assert.match(blob, /applyTemplate/);
     assert.match(blob, /envelope_id/);

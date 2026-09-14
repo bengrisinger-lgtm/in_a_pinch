@@ -33,6 +33,8 @@ export type CheckoutQuote = {
   fulfillment: string | null;
   starts_on?: string;
   ends_on?: string;
+  load_in_time?: string | null;
+  load_out_time?: string | null;
   delivery_address?: string | null;
   document_id?: string | null;
   envelope_id?: string | null;

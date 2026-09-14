@@ -10,7 +10,12 @@ const USER_A = '11111111-1111-1111-1111-111111111111';
 const HOLD_A = 'aaaaaaaa-0000-0000-0000-000000000001';
 const HOLD_B = 'bbbbbbbb-0000-0000-0000-000000000002';
 
-function makePool({ holdStatus = 'held', heldUntil = '2099-01-01T00:00:00.000Z' } = {}) {
+function makePool({
+  holdStatus = 'held',
+  heldUntil = '2099-01-01T00:00:00.000Z',
+  loadIn = '08:00:00',
+  loadOut = '20:00:00',
+} = {}) {
   const calls = [];
   function record(sql, params) {
     const compact = String(sql).replace(/\s+/g, ' ').trim();
@@ -43,6 +48,8 @@ function makePool({ holdStatus = 'held', heldUntil = '2099-01-01T00:00:00.000Z' 
         unit_id: `u0000000-0000-0000-0000-00000000000${i + 1}`,
         starts_on: '2026-09-12',
         ends_on: '2026-09-13',
+        load_in_time: loadIn,
+        load_out_time: loadOut,
         status: holdStatus,
         held_until: heldUntil,
         sku_name: 'SM58',
@@ -91,6 +98,8 @@ function makePool({ holdStatus = 'held', heldUntil = '2099-01-01T00:00:00.000Z' 
             event_type: params[11],
             starts_on: '2026-09-12',
             ends_on: '2026-09-13',
+            load_in_time: params[14],
+            load_out_time: params[15],
             created_at: '2026-09-11T00:00:00.000Z',
           },
         ],
@@ -174,6 +183,27 @@ describe('POST /api/v1/quotes/checkout', () => {
     assert.match(body.hold_ttl_note, /24 hours/);
     const insert = pool.calls.find((c) => c.sql.includes('INSERT INTO') && c.sql.includes('.quotes') && !c.sql.includes('quote_line'));
     assert.equal(insert.params[0], TENANT_A);
+    await new Promise((r) => server.close(r));
+  });
+
+  it('bills 8 p.m. load-in to 9 a.m. load-out as one day', async () => {
+    const pool = makePool({ loadIn: '20:00:00', loadOut: '09:00:00' });
+    const { server, url } = await listen(pool);
+    const res = await fetch(`${url}/api/v1/quotes/checkout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Alex Renter',
+        email: 'alex@example.com',
+        fulfillment: 'pickup',
+        hold_ids: [HOLD_A, HOLD_B],
+      }),
+    });
+    assert.equal(res.status, 201);
+    const body = await res.json();
+    assert.equal(Number(body.quote.subtotal), 50);
+    assert.equal(body.quote.load_in_time, '20:00');
+    assert.equal(body.quote.load_out_time, '09:00');
     await new Promise((r) => server.close(r));
   });
 

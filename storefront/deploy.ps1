@@ -1,18 +1,15 @@
-# deploy.ps1 — upload the IAP staff storefront to the hub app bucket
+# deploy.ps1 — upload the IAP storefront
 #
-# Does not terraform. Does not deploy api-gateway. Does not create the
-# Application row (that is the IAP tenant Applications page — it provisions
-# the private GCS bucket). Do not add this app to Loan Conduit deploy-to-gcs.ps1.
-# Do not upload to the landing bucket (apex / coming-soon).
-#
-# Host must already be on the URL map → app-resolver. Reserved tenant
-# subdomains that are: hub, scan, loa, sign. This script uses hub.
+# Hub (staff): default AppSlug hub. Includes /console/ overlay.
+# Apex (consumer shop): AppSlug coming-soon (or apex / landing / www).
+#   Same dist/. No /console/ overlay. Do not upload hub onto the landing
+#   bucket. Do not terraform. Do not deploy api-gateway.
 #
 # Usage:
 #   cd micro-applications\in-a-pinch\storefront
-#   .\build-console-overlay.ps1   # IAP-branded /console/ overlay
-#   .\deploy.ps1
-#   .\deploy.ps1 -Build
+#   .\build-console-overlay.ps1   # hub /console/ overlay
+#   .\deploy.ps1 -Build            # hub staff SPA
+#   .\deploy.ps1 -AppSlug coming-soon   # apex shop (same dist, no rebuild)
 
 param(
     [string]$TenantSlug = "cadel-7414",
@@ -22,6 +19,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ScriptRoot = $PSScriptRoot
+
+$LandingSlugs = @("apex", "landing", "coming-soon", "www")
+$IsLanding = $LandingSlugs -contains $AppSlug
+
+if ($AppSlug -ne "hub" -and -not $IsLanding) {
+    throw "AppSlug must be hub or a landing slug (apex, landing, coming-soon, www). Got '$AppSlug'."
+}
 
 if (-not $env:TF_VAR_gcp_project_id) {
     $setEnv = Join-Path $ScriptRoot "..\..\..\symlfy-baas\syml-platform\infra\set-env.ps1"
@@ -57,7 +61,23 @@ if (-not (Test-Path (Join-Path $DistDir "index.html"))) {
 Write-Host "Checking $BucketUri ..." -ForegroundColor Cyan
 gcloud storage ls $BucketUri 2>$null | Out-Null
 if ($LASTEXITCODE -ne 0) {
-    Write-Host @"
+    if ($IsLanding) {
+        Write-Host @"
+
+Bucket $BucketName does not exist yet.
+
+Create it through the IAP tenant Applications page (not operator, not terraform):
+  1. Sign in at https://app.symlavault.com as a member of the IAP tenant
+  2. Applications, then New application
+  3. Name: Coming Soon
+     The wizard mints the slug from the name. It must be coming-soon (or
+     apex / landing / www) so apex+www already route here. Do not name it hub.
+
+Then re-run: .\deploy.ps1 -AppSlug coming-soon
+
+"@ -ForegroundColor Yellow
+    } else {
+        Write-Host @"
 
 Bucket $BucketName does not exist yet.
 
@@ -74,6 +94,7 @@ Then re-run this script. After upload, click Deploy on that application so
 app-resolver sees status=active (up to 60s cache).
 
 "@ -ForegroundColor Yellow
+    }
     throw "Application slug '$AppSlug' is not provisioned yet."
 }
 
@@ -82,7 +103,9 @@ gcloud storage rsync --recursive --delete-unmatched-destination-objects $DistDir
 if ($LASTEXITCODE -ne 0) { throw "gcloud storage rsync failed" }
 
 $ConsoleOverlay = Join-Path $ScriptRoot "console-dist"
-if (Test-Path (Join-Path $ConsoleOverlay "index.html")) {
+if ($IsLanding) {
+    Write-Host "Console overlay skipped on landing slug (staff Vault stays on hub)." -ForegroundColor Cyan
+} elseif (Test-Path (Join-Path $ConsoleOverlay "index.html")) {
     Write-Host "Re-applying /console/ overlay (hub rsync --delete would drop it)" -ForegroundColor Cyan
     gcloud storage rsync --recursive --delete-unmatched-destination-objects $ConsoleOverlay "$BucketUri/console"
     if ($LASTEXITCODE -ne 0) { throw "gcloud storage rsync console overlay failed" }
@@ -90,6 +113,11 @@ if (Test-Path (Join-Path $ConsoleOverlay "index.html")) {
 
 Write-Host ""
 Write-Host "Uploaded. Public URL after Applications → Deploy:" -ForegroundColor Green
-Write-Host "  https://hub.inapinchav.com/"
-Write-Host "Do not deploy api-gateway. Staff inventory through api.* still 401s until HMAC cutover."
-Write-Host "App-resolver CSP for tenant api/auth is coded; deploy app-resolver or the SPA cannot fetch api.inapinchav.com."
+if ($IsLanding) {
+    Write-Host "  https://inapinchav.com/"
+    Write-Host "Consumer shop. Hub stays https://hub.inapinchav.com/"
+} else {
+    Write-Host "  https://hub.inapinchav.com/"
+    Write-Host "Staff hub. Apex shop is a second upload: .\deploy.ps1 -AppSlug coming-soon"
+}
+Write-Host "Do not deploy api-gateway. Do not terraform."

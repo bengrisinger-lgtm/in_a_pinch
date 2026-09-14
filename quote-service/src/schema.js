@@ -63,6 +63,8 @@ const TABLES = [
       event_type TEXT,
       starts_on DATE,
       ends_on DATE,
+      load_in_time TIME,
+      load_out_time TIME,
       subtotal NUMERIC NOT NULL DEFAULT 0,
       total NUMERIC NOT NULL DEFAULT 0,
       created_by UUID,
@@ -140,6 +142,8 @@ const TABLES = [
       quote_id UUID,
       starts_on DATE NOT NULL,
       ends_on DATE NOT NULL,
+      load_in_time TIME,
+      load_out_time TIME,
       status TEXT NOT NULL DEFAULT 'held',
       held_until TIMESTAMPTZ,
       created_by UUID,
@@ -236,6 +240,10 @@ export async function ensureQuoteTables(db, tenantId) {
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS event_type TEXT`);
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS starts_on DATE`);
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS ends_on DATE`);
+  await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS load_in_time TIME`);
+  await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS load_out_time TIME`);
+  await db.query(`ALTER TABLE ${schema}.inventory_reservations ADD COLUMN IF NOT EXISTS load_in_time TIME`);
+  await db.query(`ALTER TABLE ${schema}.inventory_reservations ADD COLUMN IF NOT EXISTS load_out_time TIME`);
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS calendar_event_id TEXT`);
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS calendar_provider TEXT`);
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS calendar_push_status TEXT`);

@@ -7,9 +7,11 @@ import {
   HOLD_TTL_UNPAID_SIGNED_MINUTES,
 } from './schema.js';
 import { wrapWithTenant, withTenantTransaction } from './pool.js';
+import { actorUserId, isStaffIdentity } from './auth.js';
 import { deliveryFeeFromOneWay } from './delivery.js';
 import { applyPaidQuote, applyRefundedQuote } from './paid.js';
 import { dollarsToCents } from './square.js';
+import { billingDays, occupancyDays, parseHm } from './rentalPeriod.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const UUID_RE =
@@ -47,15 +49,23 @@ function money(raw, fallback = 0) {
   return n;
 }
 
-function spanDays(startsOn, endsOn) {
-  const a = Date.parse(`${startsOn}T00:00:00Z`);
-  const b = Date.parse(`${endsOn}T00:00:00Z`);
-  return Math.round((b - a) / 86400000) + 1;
+function billedDaysFromHold(row) {
+  const loadIn = parseHm(row.load_in_time);
+  const loadOut = parseHm(row.load_out_time);
+  if (loadIn && loadOut) {
+    const n = billingDays(row.starts_on, loadIn, row.ends_on, loadOut);
+    if (n != null) return n;
+  }
+  return occupancyDays(row.starts_on, row.ends_on);
 }
 
 export function quoteRoutes(ctx) {
   const router = Router();
   const pool = ctx.pool;
+  const staff = ctx.staff;
+  if (typeof staff !== 'function') {
+    throw new Error('quoteRoutes needs staff middleware');
+  }
 
   async function scoped(req) {
     const tenantId = hmacTenantId(req);
@@ -63,7 +73,7 @@ export function quoteRoutes(ctx) {
     return { tenantId, schema, db: wrapWithTenant(pool, tenantId) };
   }
 
-  router.post('/customers', async (req, res) => {
+  router.post('/customers', staff, async (req, res) => {
     const tenantId = hmacTenantId(req);
     const name = clip(req.body?.name, NAME_MAX);
     const email = clip(req.body?.email, EMAIL_MAX);
@@ -143,7 +153,8 @@ export function quoteRoutes(ctx) {
       const result = await withTenantTransaction(pool, tenantId, async (client) => {
         const holds = await client.query(
           `SELECT r.id, r.sku_id, r.unit_id, r.starts_on::text AS starts_on,
-                  r.ends_on::text AS ends_on, r.status, r.held_until,
+                  r.ends_on::text AS ends_on, r.load_in_time::text AS load_in_time,
+                  r.load_out_time::text AS load_out_time, r.status, r.held_until,
                   s.name AS sku_name, s.daily_rate, u.serial_number
              FROM ${schemaName}.inventory_reservations r
              JOIN ${schemaName}.inventory_skus s
@@ -162,6 +173,8 @@ export function quoteRoutes(ctx) {
         }
         const startsOn = holds.rows[0].starts_on;
         const endsOn = holds.rows[0].ends_on;
+        const loadIn = parseHm(holds.rows[0].load_in_time);
+        const loadOut = parseHm(holds.rows[0].load_out_time);
         for (const row of holds.rows) {
           if (row.status !== 'held' || !row.held_until || new Date(row.held_until) <= new Date()) {
             const err = new Error('A hold is expired or not active');
@@ -170,6 +183,11 @@ export function quoteRoutes(ctx) {
           }
           if (row.starts_on !== startsOn || row.ends_on !== endsOn) {
             const err = new Error('Holds must share the same rental dates');
+            err.status = 409;
+            throw err;
+          }
+          if (parseHm(row.load_in_time) !== loadIn || parseHm(row.load_out_time) !== loadOut) {
+            const err = new Error('Holds must share the same load-in and load-out times');
             err.status = 409;
             throw err;
           }
@@ -218,7 +236,7 @@ export function quoteRoutes(ctx) {
           customerId = customer.id;
         }
 
-        const nights = spanDays(startsOn, endsOn);
+        const nights = billedDaysFromHold(holds.rows[0]);
         const bySku = new Map();
         for (const row of holds.rows) {
           const cur = bySku.get(row.sku_id) || {
@@ -249,12 +267,14 @@ export function quoteRoutes(ctx) {
           `INSERT INTO ${schemaName}.quotes (
              tenant_id, customer_id, notes, delivery_address, delivery_miles,
              drive_minutes, delivery_fee, subtotal, total, created_by,
-             fulfillment, event_type, starts_on, ends_on
-           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::date,$14::date)
+             fulfillment, event_type, starts_on, ends_on, load_in_time, load_out_time
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::date,$14::date,$15::time,$16::time)
            RETURNING id, customer_id, status, notes, document_id, envelope_id,
                      delivery_address, delivery_miles, drive_minutes, delivery_fee,
                      subtotal, total, fulfillment, event_type,
-                     starts_on::text AS starts_on, ends_on::text AS ends_on, created_at`,
+                     starts_on::text AS starts_on, ends_on::text AS ends_on,
+                     load_in_time::text AS load_in_time, load_out_time::text AS load_out_time,
+                     created_at`,
           [
             tenantId,
             customerId,
@@ -265,11 +285,13 @@ export function quoteRoutes(ctx) {
             deliveryFee,
             subtotal,
             total,
-            req.identity.userId,
+            actorUserId(req),
             fulfillment,
             eventType,
             startsOn,
             endsOn,
+            loadIn,
+            loadOut,
           ]
         );
         const quote = quoteIns.rows[0];
@@ -313,7 +335,7 @@ export function quoteRoutes(ctx) {
     }
   });
 
-  router.get('/customers', async (req, res) => {
+  router.get('/customers', staff, async (req, res) => {
     try {
       const { schema, db } = await scoped(req);
       const { rows } = await db.query(
@@ -329,7 +351,7 @@ export function quoteRoutes(ctx) {
     }
   });
 
-  router.post('/', async (req, res) => {
+  router.post('/', staff, async (req, res) => {
     const tenantId = hmacTenantId(req);
     const customerId = typeof req.body?.customer_id === 'string' ? req.body.customer_id.trim() : '';
     if (!customerId) {
@@ -383,7 +405,7 @@ export function quoteRoutes(ctx) {
           deliveryFee,
           subtotal,
           total,
-          req.identity.userId,
+          actorUserId(req),
           typeof req.body?.document_id === 'string' ? req.body.document_id : null,
           typeof req.body?.envelope_id === 'string' ? req.body.envelope_id : null,
         ]
@@ -404,7 +426,7 @@ export function quoteRoutes(ctx) {
     }
   });
 
-  router.get('/', async (req, res) => {
+  router.get('/', staff, async (req, res) => {
     try {
       const { tenantId, schema, db } = await scoped(req);
       await expireStaleHolds(db, schema, tenantId);
@@ -413,7 +435,8 @@ export function quoteRoutes(ctx) {
       const { rows } = await db.query(
         `SELECT q.id, q.customer_id, q.status, q.delivery_fee, q.subtotal, q.total,
                 q.document_id, q.envelope_id, q.fulfillment, q.starts_on::text AS starts_on,
-                q.ends_on::text AS ends_on, q.created_at,
+                q.ends_on::text AS ends_on, q.load_in_time::text AS load_in_time,
+                q.load_out_time::text AS load_out_time, q.created_at,
                 q.customer_signing_token, q.staff_signing_token,
                 q.payment_link_url, q.payment_link_id,
                 c.name AS customer_name, c.email AS customer_email,
@@ -486,7 +509,7 @@ export function quoteRoutes(ctx) {
     }
   });
 
-  router.get('/:id', async (req, res) => {
+  router.get('/:id', staff, async (req, res) => {
     try {
       const { tenantId, schema, db } = await scoped(req);
       await expireStaleHolds(db, schema, tenantId);
@@ -541,6 +564,9 @@ export function quoteRoutes(ctx) {
         return res.json({ quote: found.rows[0], schema, refund: null });
       }
       if (found.rows[0].status === 'paid') {
+        if (!isStaffIdentity(req.identity)) {
+          return res.status(403).json({ error: 'Staff session required to refund a paid order' });
+        }
         const paid = await db.query(
           `SELECT id, amount, method, external_id
              FROM ${schema}.payments
@@ -569,7 +595,7 @@ export function quoteRoutes(ctx) {
             amount: amount || 0,
             method: refund.refunded ? 'square_refund' : 'staff_refund',
             externalId: refund.id || paid.rows[0]?.external_id || null,
-            recordedBy: req.identity.userId,
+            recordedBy: actorUserId(req),
           })
         );
         return res.json({
@@ -599,7 +625,7 @@ export function quoteRoutes(ctx) {
     }
   });
 
-  router.post('/:id/awaiting-payment', async (req, res) => {
+  router.post('/:id/awaiting-payment', staff, async (req, res) => {
     const tenantId = hmacTenantId(req);
     if (!UUID_RE.test(req.params.id)) {
       return res.status(400).json({ error: 'id must be a UUID' });
@@ -712,7 +738,7 @@ export function quoteRoutes(ctx) {
     }
   });
 
-  router.post('/:id/payments', async (req, res) => {
+  router.post('/:id/payments', staff, async (req, res) => {
     const tenantId = hmacTenantId(req);
     if (!UUID_RE.test(req.params.id)) {
       return res.status(400).json({ error: 'id must be a UUID' });
@@ -752,7 +778,7 @@ export function quoteRoutes(ctx) {
             amount: payAmount,
             method,
             externalId: clip(req.body?.external_id, 120),
-            recordedBy: req.identity.userId,
+            recordedBy: actorUserId(req),
           });
         });
         let calendar = { pushed: false, reason: 'not_configured' };
@@ -834,7 +860,7 @@ export function quoteRoutes(ctx) {
           status,
           method,
           clip(req.body?.external_id, 120),
-          req.identity.userId,
+          actorUserId(req),
         ]
       );
       res.status(201).json({ payment: rows[0], schema });

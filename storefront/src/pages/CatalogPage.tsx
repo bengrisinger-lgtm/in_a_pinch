@@ -1,6 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import CalendarModal from '../components/CalendarModal';
-import { addDaysIso, formatUsd, localIsoDate, money, spanDays, stockLabel } from '../lib/dates';
+import {
+  billingDays,
+  formatPrettyDate,
+  formatPrettyTime,
+  formatUsd,
+  LOAD_IN_DEFAULT,
+  LOAD_OUT_DEFAULT,
+  LOAD_OUT_POLICY,
+  localIsoDate,
+  money,
+  needsVenueLoadOutNote,
+  stockLabel,
+  timeOptions,
+} from '../lib/dates';
 import {
   cancelHold,
   createHolds,
@@ -19,18 +32,33 @@ export type CartLine = {
   heldUntil: string | null;
   startsOn: string;
   endsOn: string;
+  loadIn: string;
+  loadOut: string;
 };
 
 type Props = {
   email: string;
+  staff: boolean;
+  consumer?: boolean;
   cart: CartLine[];
   setCart: (next: CartLine[] | ((prev: CartLine[]) => CartLine[])) => void;
+  /** Bumped after hold release / line remove so availability reloads without unmounting. */
+  catalogEpoch: number;
 };
 
-export default function CatalogPage({ email, cart, setCart }: Props) {
-  const [startsOn, setStartsOn] = useState(localIsoDate());
-  const [endsOn, setEndsOn] = useState(addDaysIso(localIsoDate(), 1));
-  const [applied, setApplied] = useState({ startsOn: localIsoDate(), endsOn: addDaysIso(localIsoDate(), 1) });
+export default function CatalogPage({ email, staff, consumer = false, cart, setCart, catalogEpoch }: Props) {
+  const today = localIsoDate();
+  const [startsOn, setStartsOn] = useState(today);
+  const [endsOn, setEndsOn] = useState(today);
+  const [loadIn, setLoadIn] = useState(LOAD_IN_DEFAULT);
+  const [loadOut, setLoadOut] = useState(LOAD_OUT_DEFAULT);
+  const [applied, setApplied] = useState({
+    startsOn: today,
+    endsOn: today,
+    loadIn: LOAD_IN_DEFAULT,
+    loadOut: LOAD_OUT_DEFAULT,
+  });
+  const [preview, setPreview] = useState<{ startsOn: string; endsOn: string } | null>(null);
   const [skus, setSkus] = useState<Sku[]>([]);
   const [category, setCategory] = useState('All');
   const [error, setError] = useState<string | null>(null);
@@ -38,8 +66,8 @@ export default function CatalogPage({ email, cart, setCart }: Props) {
   const [qty, setQty] = useState<Record<string, number>>({});
   const [busySku, setBusySku] = useState<string | null>(null);
   const [calendarSku, setCalendarSku] = useState<Sku | null>(null);
-
-  const cartKey = cart.map((line) => line.skuId).join(',');
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [localEpoch, setLocalEpoch] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -49,10 +77,12 @@ export default function CatalogPage({ email, cart, setCart }: Props) {
       try {
         const data = await listSkus(applied.startsOn, applied.endsOn);
         if (cancelled) return;
-        setSkus(data.skus.filter((s) => s.active !== false));
+        const next = (Array.isArray(data.skus) ? data.skus : []).filter((s) => s.active !== false);
+        // Hold cancel can race a catalog GET. Keep the last good list instead of
+        // flashing "No SKUs yet" when the reload comes back empty or aborted.
+        setSkus((prev) => (next.length === 0 && prev.length > 0 ? prev : next));
       } catch (err) {
         if (cancelled) return;
-        setSkus([]);
         setError(apiMessage(err));
       } finally {
         if (!cancelled) setLoading(false);
@@ -61,7 +91,11 @@ export default function CatalogPage({ email, cart, setCart }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [applied, cartKey]);
+  }, [applied.startsOn, applied.endsOn, catalogEpoch, localEpoch]);
+
+  function reloadCatalog() {
+    setLocalEpoch((n) => n + 1);
+  }
 
   const categories = useMemo(() => {
     const set = new Set<string>();
@@ -72,17 +106,58 @@ export default function CatalogPage({ email, cart, setCart }: Props) {
   }, [skus]);
 
   const visible = skus.filter((s) => category === 'All' || s.category === category);
-  const nights = spanDays(applied.startsOn, applied.endsOn);
+  const pricedStart = preview?.startsOn || applied.startsOn;
+  const pricedEnd = preview?.endsOn || applied.endsOn;
+  const billed = billingDays(pricedStart, loadIn, pricedEnd, loadOut);
+  const nights = billed ?? 1;
+  const periodInvalid = billed == null;
 
-  async function checkDates() {
-    if (endsOn < startsOn) {
-      setError('End date must be on or after start date.');
-      return;
-    }
-    if (cart.length) {
+  async function applyRange(nextStart: string, nextEnd: string) {
+    const start = nextStart;
+    const end = nextEnd < nextStart ? nextStart : nextEnd;
+    const nextBilled = billingDays(start, loadIn, end, loadOut);
+    const changed =
+      start !== applied.startsOn ||
+      end !== applied.endsOn ||
+      loadIn !== applied.loadIn ||
+      loadOut !== applied.loadOut;
+    if (changed && cart.length) {
       await releaseCart();
     }
-    setApplied({ startsOn, endsOn });
+    setStartsOn(start);
+    setEndsOn(end);
+    setApplied({ startsOn: start, endsOn: end, loadIn, loadOut });
+    setPreview(null);
+    setPickerOpen(false);
+    setCalendarSku(null);
+    setError(nextBilled == null ? 'Load-out must be after load-in.' : null);
+  }
+
+  async function applyTimes(nextIn: string, nextOut: string) {
+    setLoadIn(nextIn);
+    setLoadOut(nextOut);
+    const nextBilled = billingDays(applied.startsOn, nextIn, applied.endsOn, nextOut);
+    if (nextBilled == null) {
+      setError('Load-out must be after load-in.');
+      return;
+    }
+    const changed = nextIn !== applied.loadIn || nextOut !== applied.loadOut;
+    if (changed && cart.length) {
+      await releaseCart();
+    }
+    setApplied({
+      startsOn: applied.startsOn,
+      endsOn: applied.endsOn,
+      loadIn: nextIn,
+      loadOut: nextOut,
+    });
+    setError(null);
+  }
+
+  function closePicker() {
+    setPickerOpen(false);
+    setCalendarSku(null);
+    setPreview(null);
   }
 
   async function releaseCart() {
@@ -92,6 +167,10 @@ export default function CatalogPage({ email, cart, setCart }: Props) {
   }
 
   async function addToCart(sku: Sku) {
+    if (periodInvalid) {
+      setError('Load-out must be after load-in.');
+      return;
+    }
     const available = sku.units_available ?? 0;
     const want = Math.min(qty[sku.id] || 1, available);
     if (want < 1) return;
@@ -107,6 +186,8 @@ export default function CatalogPage({ email, cart, setCart }: Props) {
         quantity: want,
         starts_on: applied.startsOn,
         ends_on: applied.endsOn,
+        load_in_time: applied.loadIn,
+        load_out_time: applied.loadOut,
       });
       setCart((prev) => [
         ...prev,
@@ -120,9 +201,12 @@ export default function CatalogPage({ email, cart, setCart }: Props) {
           heldUntil: data.holds[0]?.held_until || null,
           startsOn: applied.startsOn,
           endsOn: applied.endsOn,
+          loadIn: applied.loadIn,
+          loadOut: applied.loadOut,
         },
       ]);
       window.dispatchEvent(new Event('iap-open-cart'));
+      reloadCatalog();
     } catch (err) {
       setError(apiMessage(err));
     } finally {
@@ -138,8 +222,9 @@ export default function CatalogPage({ email, cart, setCart }: Props) {
             <div className="eyebrow">Denver AV Equipment Rentals</div>
             <h1>AV rentals for when you're in a pinch.</h1>
             <p>
-              Affordable speakers, microphones, mixers, lighting and projection for events around
-              Denver. Dates check live serial stock — this SM58, not a generic count.
+              {consumer
+                ? 'Affordable speakers, microphones, mixers, lighting and projection for events around Denver. Professional gear without the giant rental-house price tag.'
+                : 'Affordable speakers, microphones, mixers, lighting and projection for events around Denver. Dates check live serial stock — this SM58, not a generic count.'}
             </p>
             <a className="btn" href="#rentals">
               Browse Rentals
@@ -150,7 +235,7 @@ export default function CatalogPage({ email, cart, setCart }: Props) {
             <span>We've got you covered.</span>
             <hr />
             <strong>Check real availability.</strong>
-            <span>Select dates to see how many units are free before you add gear. Holds last 2 hours.</span>
+            <span>Pick dates, open the calendar, add gear, sign the agreement, pay on Square. No account required.</span>
           </div>
         </div>
       </div>
@@ -163,41 +248,63 @@ export default function CatalogPage({ email, cart, setCart }: Props) {
             </div>
             <h2>Build your order.</h2>
           </div>
-          <p className="muted">Staff session · {email}</p>
+          <p className="muted">{staff ? `Staff session · ${email}` : 'No account required'}</p>
         </div>
 
         <p className="banner">
-          Signed in as staff. Add-to-cart places a 15-minute hold on those serials. After they
-          start signing it lasts 2 hours; after both sign, unpaid holds last 24 hours. Checkout is
-          details, kit agreement on the signer app, then Square — no card fields here.
+          {staff
+            ? 'Signed in as staff. Add-to-cart places a 15-minute hold on those serials. After they start signing it lasts 2 hours; after both sign, unpaid holds last 24 hours. Checkout is details, kit agreement on the signer app, then Square — no card fields here.'
+            : 'Pick dates to see what is free. Add to cart, enter your details, sign the agreement, then pay on Square. No login and no card fields on this page. A saved account for faster checkout is later if you want one.'}
         </p>
         {error ? <p className="banner error">{error}</p> : null}
 
-        <div className="datebar">
-          <div>
-            <label htmlFor="catalogStart">Rental start</label>
-            <input
-              id="catalogStart"
-              type="date"
-              value={startsOn}
-              onChange={(e) => setStartsOn(e.target.value)}
-            />
-          </div>
-          <div>
-            <label htmlFor="catalogEnd">Rental end</label>
-            <input
-              id="catalogEnd"
-              type="date"
-              value={endsOn}
-              onChange={(e) => setEndsOn(e.target.value)}
-            />
-          </div>
-          <div style={{ display: 'flex', alignItems: 'end' }}>
-            <button className="btn orange" type="button" onClick={checkDates}>
-              Check Dates
+        <div className="datebar datebar-times">
+          <button className="date-field" type="button" onClick={() => setPickerOpen(true)}>
+            <span className="date-field-label">Load in</span>
+            <span className="date-value">{formatPrettyDate(pricedStart)}</span>
+          </button>
+          <label className="date-field date-time">
+            <span className="date-field-label">Time</span>
+            <select
+              value={loadIn}
+              onChange={(e) => void applyTimes(e.target.value, loadOut)}
+            >
+              {timeOptions(false).map((hm) => (
+                <option key={hm} value={hm}>
+                  {formatPrettyTime(hm)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button className="date-field" type="button" onClick={() => setPickerOpen(true)}>
+            <span className="date-field-label">Load out</span>
+            <span className="date-value">{formatPrettyDate(pricedEnd)}</span>
+          </button>
+          <label className="date-field date-time">
+            <span className="date-field-label">Time</span>
+            <select
+              value={loadOut}
+              onChange={(e) => void applyTimes(loadIn, e.target.value)}
+            >
+              {timeOptions(true).map((hm) => (
+                <option key={hm} value={hm}>
+                  {formatPrettyTime(hm)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="datebar-action">
+            <button className="btn orange" type="button" onClick={() => setPickerOpen(true)}>
+              {periodInvalid ? 'Set times' : `${nights} day${nights === 1 ? '' : 's'}`}
             </button>
           </div>
         </div>
+        <p className="muted datebar-hint">{LOAD_OUT_POLICY}</p>
+        {needsVenueLoadOutNote(loadOut) ? (
+          <p className="banner">
+            This load-out is after midnight. Coordinate that time with the venue before you confirm.
+          </p>
+        ) : null}
 
         <div className="filters">
           {categories.map((cat) => (
@@ -214,7 +321,9 @@ export default function CatalogPage({ email, cart, setCart }: Props) {
 
         {loading ? <p className="muted">Loading stock…</p> : null}
         {!loading && visible.length === 0 && !error ? (
-          <p className="muted">No SKUs yet. Open Stock to add serials.</p>
+          <p className="muted">
+            {staff ? 'No SKUs yet. Open Stock to add serials.' : 'Nothing available for those dates yet.'}
+          </p>
         ) : null}
 
         <div className="grid">
@@ -233,8 +342,8 @@ export default function CatalogPage({ email, cart, setCart }: Props) {
                   <h3>{sku.name}</h3>
                   <span className={`stock ${band}`}>{stockLabel(sku.units_available, total, band)}</span>
                   <div className="price">
-                    {formatUsd(rate)} / day
-                    {nights > 1 ? ` · ${formatUsd(rate * nights)} for ${nights} days` : ''}
+                    {formatUsd(rate)} / day · {formatUsd(rate * nights)} for {nights} day
+                    {nights === 1 ? '' : 's'}
                   </div>
                   <div className="addrow">
                     <select
@@ -250,7 +359,7 @@ export default function CatalogPage({ email, cart, setCart }: Props) {
                     </select>
                     <button
                       type="button"
-                      disabled={available < 1 || inCart || busySku === sku.id}
+                      disabled={available < 1 || inCart || busySku === sku.id || periodInvalid}
                       onClick={() => addToCart(sku)}
                     >
                       {inCart ? 'In cart' : busySku === sku.id ? 'Holding…' : 'Add to cart'}
@@ -260,9 +369,11 @@ export default function CatalogPage({ email, cart, setCart }: Props) {
                     <button type="button" className="secondary" onClick={() => setCalendarSku(sku)}>
                       Calendar
                     </button>
-                    <button type="button" className="secondary" onClick={() => (window.location.hash = '#stock')}>
-                      Edit stock
-                    </button>
+                    {staff ? (
+                      <button type="button" className="secondary" onClick={() => (window.location.hash = '#stock')}>
+                        Edit stock
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               </article>
@@ -291,12 +402,19 @@ export default function CatalogPage({ email, cart, setCart }: Props) {
         </div>
       </div>
 
-      <footer id="contact">
-        <p>Denver, Colorado • Audio • Video • Lighting • Equipment Rentals</p>
-      </footer>
-
-      {calendarSku ? (
-        <CalendarModal sku={calendarSku} onClose={() => setCalendarSku(null)} />
+      {pickerOpen || calendarSku ? (
+        <CalendarModal
+          sku={calendarSku}
+          startsOn={startsOn}
+          endsOn={endsOn}
+          loadIn={loadIn}
+          loadOut={loadOut}
+          onClose={closePicker}
+          onCommit={(nextStart, nextEnd) => {
+            void applyRange(nextStart, nextEnd);
+          }}
+          onPreview={(nextStart, nextEnd) => setPreview({ startsOn: nextStart, endsOn: nextEnd })}
+        />
       ) : null}
     </>
   );
@@ -304,7 +422,7 @@ export default function CatalogPage({ email, cart, setCart }: Props) {
 
 function apiMessage(err: unknown): string {
   if (err instanceof InventoryApiError && err.status === 401) {
-    return 'Inventory API returned 401. Staff cookie is present, but live gateway still 401s tenant spokes until HMAC cutover. Do not deploy api-gateway yet.';
+    return 'Could not load availability. Try again, or sign in as staff from the footer.';
   }
   if (err instanceof Error) return err.message;
   return 'Request failed';

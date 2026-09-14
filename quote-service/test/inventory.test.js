@@ -162,7 +162,7 @@ function makePool() {
     }
 
     if (compact.includes('INSERT INTO') && compact.includes('.inventory_reservations')) {
-      const minutes = Number(params[6]) || HOLD_TTL_CART_MINUTES;
+      const minutes = Number(params[8]) || HOLD_TTL_CART_MINUTES;
       const row = {
         id: randomUUID(),
         unit_id: params[1],
@@ -170,6 +170,8 @@ function makePool() {
         quote_id: params[3],
         starts_on: params[4],
         ends_on: params[5],
+        load_in_time: params[6],
+        load_out_time: params[7],
         status: 'held',
         held_until: new Date(Date.now() + minutes * 60 * 1000).toISOString(),
         created_at: new Date().toISOString(),
@@ -186,6 +188,8 @@ function makePool() {
             quote_id: row.quote_id,
             starts_on: row.starts_on,
             ends_on: row.ends_on,
+            load_in_time: row.load_in_time,
+            load_out_time: row.load_out_time,
             status: row.status,
             held_until: row.held_until,
             created_at: row.created_at,
@@ -393,7 +397,7 @@ describe('serial inventory HMAC scope', () => {
   it('cart hold TTL is 15 minutes, not indefinite', () => {
     assert.equal(HOLD_TTL_CART_MINUTES, 15);
     const src = fs.readFileSync(path.join(__dirname, '../src/inventory.js'), 'utf8');
-    assert.match(src, /now\(\) \+ \(\$7::int \* interval '1 minute'\)/);
+    assert.match(src, /now\(\) \+ \(\$9::int \* interval '1 minute'\)/);
     assert.match(src, /r\.held_until > now\(\)/);
     assert.match(
       src,
@@ -455,6 +459,8 @@ describe('serial inventory HMAC scope', () => {
         unit_id: unitId,
         starts_on: '2026-10-01',
         ends_on: '2026-10-03',
+        load_in_time: '08:00',
+        load_out_time: '20:00',
       }),
     });
     assert.equal(hold.status, 201);
@@ -470,6 +476,8 @@ describe('serial inventory HMAC scope', () => {
         unit_id: unitId,
         starts_on: '2026-10-02',
         ends_on: '2026-10-04',
+        load_in_time: '08:00',
+        load_out_time: '20:00',
       }),
     });
     assert.equal(clash.status, 409);
@@ -482,6 +490,35 @@ describe('serial inventory HMAC scope', () => {
     assert.equal(availBody.units_total, 1);
     assert.equal(availBody.units_available, 0);
     assert.equal(availBody.band, 'none');
+  });
+
+  it('rejects a load-out between 12:30 a.m. and 7:00 a.m.', async () => {
+    const skuRes = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Blocked', daily_rate: 10 }),
+    });
+    const skuId = (await skuRes.json()).sku.id;
+    const u1 = await fetch(`${urlA}/api/v1/quotes/inventory/skus/${skuId}/units`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serial_number: 'BLK-1' }),
+    });
+    const unitId = (await u1.json()).unit.id;
+    const hold = await fetch(`${urlA}/api/v1/quotes/inventory/holds`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        unit_id: unitId,
+        starts_on: '2026-10-01',
+        ends_on: '2026-10-02',
+        load_in_time: '20:00',
+        load_out_time: '01:00',
+      }),
+    });
+    assert.equal(hold.status, 400);
+    const body = await hold.json();
+    assert.match(body.error, /12:30/);
   });
 
   it('does not let an expired hold block the serial', async () => {
@@ -544,6 +581,8 @@ describe('serial inventory HMAC scope', () => {
         unit_id: unitId,
         starts_on: '2026-12-01',
         ends_on: '2026-12-02',
+        load_in_time: '08:00',
+        load_out_time: '20:00',
       }),
     });
 
@@ -661,6 +700,8 @@ describe('retire and rotate serials', () => {
         unit_id: unitId,
         starts_on: '2026-12-01',
         ends_on: '2026-12-03',
+        load_in_time: '08:00',
+        load_out_time: '20:00',
       }),
     });
     assert.equal(hold.status, 201);

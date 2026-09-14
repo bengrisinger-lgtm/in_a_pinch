@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { CartLine } from '../pages/CatalogPage';
-import { formatUsd } from '../lib/dates';
+import { formatPrettyDate, formatPrettyTime, formatUsd } from '../lib/dates';
 import { deliveryFeeFromOneWay } from '../lib/delivery';
 import { COMPANY_SIGNER } from '../lib/companySigner.js';
 import { kit } from '../lib/kit';
@@ -28,8 +28,11 @@ const EVENT_TYPES = [
 
 type Props = {
   cart: CartLine[];
+  isStaff: boolean;
   startsOn: string;
   endsOn: string;
+  loadIn: string;
+  loadOut: string;
   nights: number;
   onClose: () => void;
   onRemove: (skuId: string) => void;
@@ -39,8 +42,11 @@ type Props = {
 
 export default function CartDrawer({
   cart,
+  isStaff,
   startsOn,
   endsOn,
+  loadIn,
+  loadOut,
   nights,
   onClose,
   onRemove,
@@ -217,6 +223,7 @@ export default function CartDrawer({
         {saved && panel === 3 ? (
           <>
             <AgreementPanel
+              consumer={!isStaff}
               customerName={name.trim()}
               customerEmail={email.trim()}
               staffName={COMPANY_SIGNER.name}
@@ -272,8 +279,10 @@ export default function CartDrawer({
               </p>
             ) : (
               <p>
-                <strong>Quote saved.</strong> Staff recorded {saved.fulfillment || 'pickup'} for{' '}
-                {formatUsd(Number(saved.total))}.
+                <strong>{isStaff ? 'Quote saved.' : 'Order saved.'}</strong>{' '}
+                {isStaff
+                  ? `Staff recorded ${saved.fulfillment || 'pickup'} for ${formatUsd(Number(saved.total))}.`
+                  : `${saved.fulfillment || 'pickup'} for ${formatUsd(Number(saved.total))}. Sign the agreement, then pay on Square.`}
               </p>
             )}
             <p className="muted">Id {saved.id}</p>
@@ -283,22 +292,27 @@ export default function CartDrawer({
             {saved.payment_link_url && !paid ? (
               <p>
                 <a href={saved.payment_link_url} target="_blank" rel="noopener noreferrer">
-                  Customer payment link
+                  {isStaff ? 'Customer payment link' : 'Pay for this rental'}
                 </a>
-                {' · '}
-                <a
-                  href={`mailto:${encodeURIComponent(email.trim())}?subject=${encodeURIComponent('Pay for your rental')}&body=${encodeURIComponent(saved.payment_link_url)}`}
-                >
-                  Email the renter
-                </a>
+                {isStaff ? (
+                  <>
+                    {' · '}
+                    <a
+                      href={`mailto:${encodeURIComponent(email.trim())}?subject=${encodeURIComponent('Pay for your rental')}&body=${encodeURIComponent(saved.payment_link_url)}`}
+                    >
+                      Email the renter
+                    </a>
+                  </>
+                ) : null}
               </p>
             ) : null}
             {!paid ? (
               <>
                 <p className="muted">
-                  Card numbers stay on Square&apos;s page. After the renter pays, click Mark paid
-                  (Square webhooks come later). Renter magic-link signup is later — do not send
-                  them through platform Create Account.
+                  Card numbers stay on Square&apos;s page.
+                  {isStaff
+                    ? ' After the renter pays, click Mark paid (Square webhooks come later). Renter magic-link signup is later — do not send them through platform Create Account.'
+                    : ' Open Square to pay. No account required. A saved account for faster checkout is later if you want one.'}
                 </p>
                 <p className="muted">No card number on this page.</p>
                 {error ? <p className="error">{error}</p> : null}
@@ -309,9 +323,11 @@ export default function CartDrawer({
                   <button className="back" type="button" disabled={paying} onClick={openSquare}>
                     {paying ? 'Working…' : 'Open Square checkout'}
                   </button>
-                  <button type="button" disabled={paying} onClick={recordPaid}>
-                    Mark paid
-                  </button>
+                  {isStaff ? (
+                    <button type="button" disabled={paying} onClick={recordPaid}>
+                      Mark paid
+                    </button>
+                  ) : null}
                 </div>
                 <div className="actions">
                   <button
@@ -341,7 +357,8 @@ export default function CartDrawer({
                     Qty {line.quantity} · {line.serials.join(', ')}
                   </div>
                   <div className="muted">
-                    {startsOn} → {endsOn} · {formatUsd(line.dailyRate * line.quantity * nights)}
+                    {startsOn} {loadIn} → {endsOn} {loadOut} ·{' '}
+                    {formatUsd(line.dailyRate * line.quantity * nights)}
                   </div>
                 </div>
                 <button type="button" onClick={() => onRemove(line.skuId)}>
@@ -432,12 +449,26 @@ export default function CartDrawer({
                 </select>
               </div>
               <div>
-                <label>Rental start</label>
-                <input value={startsOn} readOnly />
+                <label>Load in</label>
+                <input
+                  value={
+                    startsOn && loadIn
+                      ? `${formatPrettyDate(startsOn)} · ${formatPrettyTime(loadIn)}`
+                      : startsOn
+                  }
+                  readOnly
+                />
               </div>
               <div>
-                <label>Rental end</label>
-                <input value={endsOn} readOnly />
+                <label>Load out</label>
+                <input
+                  value={
+                    endsOn && loadOut
+                      ? `${formatPrettyDate(endsOn)} · ${formatPrettyTime(loadOut)}`
+                      : endsOn
+                  }
+                  readOnly
+                />
               </div>
               <div className="full">
                 <label htmlFor="fulfillment">Pickup or delivery</label>
@@ -463,7 +494,9 @@ export default function CartDrawer({
                   />
                   <div className="fields" style={{ marginTop: 11 }}>
                     <div>
-                      <label htmlFor="one-way-miles">One-way miles (staff estimate)</label>
+                      <label htmlFor="one-way-miles">
+                        {isStaff ? 'One-way miles (staff estimate)' : 'One-way miles (estimate)'}
+                      </label>
                       <input
                         id="one-way-miles"
                         type="number"
@@ -533,7 +566,7 @@ export default function CartDrawer({
                 Back
               </button>
               <button type="submit" disabled={saving}>
-                {saving ? 'Saving…' : 'Save quote'}
+                {saving ? 'Saving…' : isStaff ? 'Save quote' : 'Continue to agreement'}
               </button>
             </div>
           </form>

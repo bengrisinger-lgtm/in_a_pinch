@@ -12,6 +12,8 @@ import {
   HOLD_TTL_CART_MINUTES,
 } from './schema.js';
 import { wrapWithTenant, withTenantTransaction } from './pool.js';
+import { actorUserId } from './auth.js';
+import { billingDays, isLoadOutBlocked, occupancyDays, parseHm } from './rentalPeriod.js';
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -55,10 +57,8 @@ function parseIsoDate(raw) {
   return s;
 }
 
-function spanDays(startsOn, endsOn) {
-  const a = Date.parse(`${startsOn}T00:00:00Z`);
-  const b = Date.parse(`${endsOn}T00:00:00Z`);
-  return Math.round((b - a) / 86400000) + 1;
+function occupancySpan(startsOn, endsOn) {
+  return occupancyDays(startsOn, endsOn);
 }
 
 function isoDay(year, monthIndex0, day) {
@@ -108,8 +108,12 @@ async function futureBlocking(db, schema, { tenantId, unitId, skuId }) {
 export function inventoryRoutes(ctx) {
   const router = Router();
   const pool = ctx.pool;
+  const staff = ctx.staff;
+  if (typeof staff !== 'function') {
+    throw new Error('inventoryRoutes needs staff middleware');
+  }
 
-  router.post('/skus', async (req, res) => {
+  router.post('/skus', staff, async (req, res) => {
     const tenantId = hmacTenantId(req);
     const name = clip(req.body?.name, NAME_MAX);
     if (!name) {
@@ -155,7 +159,7 @@ export function inventoryRoutes(ctx) {
       if (endsOn < startsOn) {
         return res.status(400).json({ error: 'ends_on must be on or after starts_on' });
       }
-      if (spanDays(startsOn, endsOn) > DATE_MAX_SPAN_DAYS) {
+      if (occupancySpan(startsOn, endsOn) > DATE_MAX_SPAN_DAYS) {
         return res.status(400).json({ error: 'date range is too long' });
       }
     }
@@ -212,7 +216,7 @@ export function inventoryRoutes(ctx) {
     }
   });
 
-  router.post('/skus/:skuId/units', async (req, res) => {
+  router.post('/skus/:skuId/units', staff, async (req, res) => {
     const tenantId = hmacTenantId(req);
     const skuId = req.params.skuId;
     if (!UUID_RE.test(skuId)) {
@@ -254,7 +258,7 @@ export function inventoryRoutes(ctx) {
     }
   });
 
-  router.get('/skus/:skuId/units', async (req, res) => {
+  router.get('/skus/:skuId/units', staff, async (req, res) => {
     const tenantId = hmacTenantId(req);
     const skuId = req.params.skuId;
     if (!UUID_RE.test(skuId)) {
@@ -276,7 +280,7 @@ export function inventoryRoutes(ctx) {
     }
   });
 
-  router.patch('/skus/:skuId', async (req, res) => {
+  router.patch('/skus/:skuId', staff, async (req, res) => {
     const tenantId = hmacTenantId(req);
     const skuId = req.params.skuId;
     if (!UUID_RE.test(skuId)) {
@@ -337,7 +341,7 @@ export function inventoryRoutes(ctx) {
     }
   });
 
-  router.patch('/skus/:skuId/units/:unitId', async (req, res) => {
+  router.patch('/skus/:skuId/units/:unitId', staff, async (req, res) => {
     const tenantId = hmacTenantId(req);
     const skuId = req.params.skuId;
     const unitId = req.params.unitId;
@@ -408,7 +412,7 @@ export function inventoryRoutes(ctx) {
     if (endsOn < startsOn) {
       return res.status(400).json({ error: 'ends_on must be on or after starts_on' });
     }
-    if (spanDays(startsOn, endsOn) > DATE_MAX_SPAN_DAYS) {
+    if (occupancySpan(startsOn, endsOn) > DATE_MAX_SPAN_DAYS) {
       return res.status(400).json({ error: 'date range is too long' });
     }
     try {
@@ -534,8 +538,21 @@ export function inventoryRoutes(ctx) {
     if (endsOn < startsOn) {
       return res.status(400).json({ error: 'ends_on must be on or after starts_on' });
     }
-    if (spanDays(startsOn, endsOn) > DATE_MAX_SPAN_DAYS) {
+    if (occupancySpan(startsOn, endsOn) > DATE_MAX_SPAN_DAYS) {
       return res.status(400).json({ error: 'date range is too long' });
+    }
+    const loadIn = parseHm(req.body?.load_in_time);
+    const loadOut = parseHm(req.body?.load_out_time);
+    if (!loadIn || !loadOut) {
+      return res.status(400).json({ error: 'load_in_time and load_out_time (HH:mm) are required' });
+    }
+    if (isLoadOutBlocked(loadOut)) {
+      return res.status(400).json({
+        error: 'Load-out is not available from 12:30 a.m. to 7:00 a.m.',
+      });
+    }
+    if (billingDays(startsOn, loadIn, endsOn, loadOut) == null) {
+      return res.status(400).json({ error: 'Load-out must be after load-in' });
     }
     const quoteId =
       typeof req.body?.quote_id === 'string' && UUID_RE.test(req.body.quote_id)
@@ -624,10 +641,13 @@ export function inventoryRoutes(ctx) {
           }
           const inserted = await client.query(
             `INSERT INTO ${schema}.inventory_reservations
-               (tenant_id, unit_id, sku_id, quote_id, starts_on, ends_on, status, held_until, created_by)
-             VALUES ($1, $2, $3, $4, $5::date, $6::date, 'held', now() + ($7::int * interval '1 minute'), $8)
+               (tenant_id, unit_id, sku_id, quote_id, starts_on, ends_on,
+                load_in_time, load_out_time, status, held_until, created_by)
+             VALUES ($1, $2, $3, $4, $5::date, $6::date, $7::time, $8::time,
+                     'held', now() + ($9::int * interval '1 minute'), $10)
              RETURNING id, unit_id, sku_id, quote_id, starts_on::text AS starts_on,
-                       ends_on::text AS ends_on, status, held_until, created_at`,
+                       ends_on::text AS ends_on, load_in_time::text AS load_in_time,
+                       load_out_time::text AS load_out_time, status, held_until, created_at`,
             [
               tenantId,
               unit.id,
@@ -635,8 +655,10 @@ export function inventoryRoutes(ctx) {
               quoteId,
               startsOn,
               endsOn,
+              loadIn,
+              loadOut,
               HOLD_TTL_CART_MINUTES,
-              req.identity.userId,
+              actorUserId(req),
             ]
           );
           holds.push({ ...inserted.rows[0], serial_number: unit.serial_number });
@@ -661,7 +683,7 @@ export function inventoryRoutes(ctx) {
     }
   });
 
-  router.post('/holds/:holdId/confirm', async (req, res) => {
+  router.post('/holds/:holdId/confirm', staff, async (req, res) => {
     const tenantId = hmacTenantId(req);
     const holdId = req.params.holdId;
     if (!UUID_RE.test(holdId)) {
