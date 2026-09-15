@@ -82,6 +82,13 @@ function makePool() {
       return { rows: [row] };
     }
 
+    if (compact.includes('DELETE FROM') && compact.includes('.inventory_categories')) {
+      const list = categories[schema] || [];
+      const idx = list.findIndex((c) => c.id === params[0] && c.tenant_id === params[1]);
+      if (idx >= 0) list.splice(idx, 1);
+      return { rows: [], rowCount: idx >= 0 ? 1 : 0 };
+    }
+
     if (compact.includes('FROM') && compact.includes('.inventory_categories')) {
       const list = categories[schema] || [];
       if (compact.includes('lower(name)')) {
@@ -101,6 +108,17 @@ function makePool() {
           .slice()
           .sort((a, b) => String(a.name).localeCompare(String(b.name))),
       };
+    }
+
+    if (
+      compact.includes('count(*)::int AS n') &&
+      compact.includes('.inventory_skus') &&
+      compact.includes('category =')
+    ) {
+      const tenantId = params[0];
+      const catName = params[1];
+      const n = (skus[schema] || []).filter((s) => s.tenant_id === tenantId && s.category === catName).length;
+      return { rows: [{ n }] };
     }
 
     if (compact.includes('UPDATE') && compact.includes('.inventory_categories')) {
@@ -459,6 +477,8 @@ function makePool() {
   return {
     calls,
     reservations,
+    categories,
+    skus,
     async query(sql, params) {
       return handle(record(sql, params), params || []);
     },
@@ -538,7 +558,7 @@ describe('serial inventory HMAC scope', () => {
     const skuRes = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tenant_id: TENANT_B, name: 'SM58', daily_rate: 25 }),
+      body: JSON.stringify({ tenant_id: TENANT_B, name: 'SM58', category: 'Microphones', daily_rate: 25 }),
     });
     assert.equal(skuRes.status, 201);
     const skuBody = await skuRes.json();
@@ -569,7 +589,7 @@ describe('serial inventory HMAC scope', () => {
     const skuRes = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'Sub', daily_rate: 80 }),
+      body: JSON.stringify({ name: 'Sub', category: 'Microphones', daily_rate: 80 }),
     });
     const skuId = (await skuRes.json()).sku.id;
     const u1 = await fetch(`${urlA}/api/v1/quotes/inventory/skus/${skuId}/units`, {
@@ -619,11 +639,48 @@ describe('serial inventory HMAC scope', () => {
     assert.equal(availBody.band, 'none');
   });
 
+  it('holds by sku_id and quantity (consumer add-to-cart path)', async () => {
+    const skuRes = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Podium mic', category: 'Microphones', daily_rate: 12 }),
+    });
+    const skuId = (await skuRes.json()).sku.id;
+    await fetch(`${urlA}/api/v1/quotes/inventory/skus/${skuId}/units`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serial_number: 'POD-1' }),
+    });
+    await fetch(`${urlA}/api/v1/quotes/inventory/skus/${skuId}/units`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serial_number: 'POD-2' }),
+    });
+
+    const hold = await fetch(`${urlA}/api/v1/quotes/inventory/holds`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sku_id: skuId,
+        quantity: 2,
+        starts_on: '2026-10-05',
+        ends_on: '2026-10-05',
+        load_in_time: '08:00',
+        load_out_time: '20:00',
+      }),
+    });
+    const holdText = await hold.text();
+    assert.equal(hold.status, 201, holdText);
+    const body = JSON.parse(holdText);
+    assert.equal(body.holds.length, 2);
+    assert.equal(body.hold_ttl_minutes, 15);
+  });
+
   it('extends a cart hold and restarts the 15-minute window', async () => {
     const skuRes = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'Extend me', daily_rate: 12 }),
+      body: JSON.stringify({ name: 'Extend me', category: 'Microphones', daily_rate: 12 }),
     });
     const skuId = (await skuRes.json()).sku.id;
     const u1 = await fetch(`${urlA}/api/v1/quotes/inventory/skus/${skuId}/units`, {
@@ -671,7 +728,7 @@ describe('serial inventory HMAC scope', () => {
     const skuRes = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'Blocked', daily_rate: 10 }),
+      body: JSON.stringify({ name: 'Blocked', category: 'Microphones', daily_rate: 10 }),
     });
     const skuId = (await skuRes.json()).sku.id;
     const u1 = await fetch(`${urlA}/api/v1/quotes/inventory/skus/${skuId}/units`, {
@@ -700,7 +757,7 @@ describe('serial inventory HMAC scope', () => {
     const skuRes = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'Mixer', daily_rate: 40 }),
+      body: JSON.stringify({ name: 'Mixer', category: 'Microphones', daily_rate: 40 }),
     });
     const skuId = (await skuRes.json()).sku.id;
     const u1 = await fetch(`${urlA}/api/v1/quotes/inventory/skus/${skuId}/units`, {
@@ -777,7 +834,7 @@ describe('serial inventory HMAC scope', () => {
     const skuRes = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'Speaker', daily_rate: 50 }),
+      body: JSON.stringify({ name: 'Speaker', category: 'Speakers', daily_rate: 50 }),
     });
     const skuId = (await skuRes.json()).sku.id;
     await fetch(`${urlA}/api/v1/quotes/inventory/skus/${skuId}/units`, {
@@ -802,7 +859,7 @@ describe('retire and rotate serials', () => {
     const skuRes = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'Wireless', daily_rate: 30 }),
+      body: JSON.stringify({ name: 'Wireless', category: 'Microphones', daily_rate: 30 }),
     });
     const skuId = (await skuRes.json()).sku.id;
     const u1 = await fetch(`${urlA}/api/v1/quotes/inventory/skus/${skuId}/units`, {
@@ -826,7 +883,7 @@ describe('retire and rotate serials', () => {
     const skuRes = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'Sub', daily_rate: 80 }),
+      body: JSON.stringify({ name: 'Sub', category: 'Microphones', daily_rate: 80 }),
     });
     const skuId = (await skuRes.json()).sku.id;
     const u1 = await fetch(`${urlA}/api/v1/quotes/inventory/skus/${skuId}/units`, {
@@ -859,7 +916,7 @@ describe('retire and rotate serials', () => {
     const skuRes = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'Held', daily_rate: 10 }),
+      body: JSON.stringify({ name: 'Held', category: 'Microphones', daily_rate: 10 }),
     });
     const skuId = (await skuRes.json()).sku.id;
     const u1 = await fetch(`${urlA}/api/v1/quotes/inventory/skus/${skuId}/units`, {
@@ -892,7 +949,7 @@ describe('retire and rotate serials', () => {
     const skuRes = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'Hide me', daily_rate: 5 }),
+      body: JSON.stringify({ name: 'Hide me', category: 'Microphones', daily_rate: 5 }),
     });
     const skuId = (await skuRes.json()).sku.id;
     const hidden = await fetch(`${urlA}/api/v1/quotes/inventory/skus/${skuId}`, {
@@ -911,7 +968,7 @@ describe('retire and rotate serials', () => {
     assert.equal(other.status, 404);
   });
 
-  it('lists a growing category drop-menu and saves a typed name', async () => {
+  it('requires new SKUs to use a listed category', async () => {
     const listed = await fetch(`${urlA}/api/v1/quotes/inventory/categories`);
     assert.equal(listed.status, 200);
     const first = await listed.json();
@@ -931,14 +988,26 @@ describe('retire and rotate serials', () => {
     const skuRes = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'Look Solutions Unique 2', category: 'fog machines', daily_rate: 40 }),
+      body: JSON.stringify({ name: 'Look Solutions Unique 2', category: 'Fog machines', daily_rate: 40 }),
     });
     assert.equal(skuRes.status, 201);
     const sku = (await skuRes.json()).sku;
     assert.equal(sku.category, 'Fog machines');
+
+    const bad = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Mystery box', category: 'Not on the list', daily_rate: 1 }),
+    });
+    assert.equal(bad.status, 400);
   });
 
   it('renames a category on every SKU that used the old label', async () => {
+    await fetch(`${urlA}/api/v1/quotes/inventory/categories`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Hazers' }),
+    });
     const skuRes = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -960,6 +1029,11 @@ describe('retire and rotate serials', () => {
   });
 
   it('corrects Microphone to Microphones on the next inventory request', async () => {
+    await fetch(`${urlA}/api/v1/quotes/inventory/categories`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Microphone' }),
+    });
     const skuRes = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -968,6 +1042,49 @@ describe('retire and rotate serials', () => {
     assert.equal((await skuRes.json()).sku.category, 'Microphone');
     const listed = await fetch(`${urlA}/api/v1/quotes/inventory/skus`);
     const row = (await listed.json()).skus.find((s) => s.name === 'SM58 typo');
+    assert.equal(row.category, 'Microphones');
+  });
+
+  it('deletes a category and reassigns SKUs when needed', async () => {
+    const added = await fetch(`${urlA}/api/v1/quotes/inventory/categories`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Staging' }),
+    });
+    assert.equal(added.status, 201);
+    const staging = (await added.json()).categories.find((c) => c.name === 'Staging');
+    assert.ok(staging);
+    const skuRes = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Spare cable', category: 'Staging', daily_rate: 3 }),
+    });
+    assert.equal(skuRes.status, 201);
+    const skuId = (await skuRes.json()).sku.id;
+
+    const blocked = await fetch(`${urlA}/api/v1/quotes/inventory/categories/${staging.id}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    assert.equal(blocked.status, 409);
+
+    const removed = await fetch(`${urlA}/api/v1/quotes/inventory/categories/${staging.id}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reassign_to: 'Microphones' }),
+    });
+    const removedText = await removed.text();
+    assert.equal(removed.status, 200, removedText);
+    const delCall = pool.calls.find((c) => c.sql.includes('DELETE') && c.sql.includes('inventory_categories'));
+    assert.ok(delCall);
+    assert.equal(delCall.params[0], staging.id);
+    const bucket = pool.categories[SCHEMA_A] || [];
+    assert.ok(!bucket.some((c) => c.id === staging.id), `mock still has: ${bucket.map((c) => c.name).join(', ')}`);
+    const cats = JSON.parse(removedText).categories;
+    assert.ok(!cats.some((c) => c.id === staging.id));
+    const skus = await fetch(`${urlA}/api/v1/quotes/inventory/skus`);
+    const row = (await skus.json()).skus.find((s) => s.id === skuId);
     assert.equal(row.category, 'Microphones');
   });
 });

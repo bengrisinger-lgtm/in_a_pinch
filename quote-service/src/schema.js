@@ -245,13 +245,19 @@ export async function extendCartHolds(db, schema, tenantId, holdIds, minutes = H
 async function forceRls(db, qualified, table) {
   await db.query(`ALTER TABLE ${qualified} ENABLE ROW LEVEL SECURITY`);
   await db.query(`ALTER TABLE ${qualified} FORCE ROW LEVEL SECURITY`);
-  await db.query(`DROP POLICY IF EXISTS tenant_isolation_${table} ON ${qualified}`);
-  await db.query(`
-    CREATE POLICY tenant_isolation_${table} ON ${qualified}
-      FOR ALL
-      USING (tenant_id = current_setting('app.tenant_id', true)::UUID)
-      WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::UUID)
-  `);
+  const policy = `tenant_isolation_${table}`;
+  try {
+    await db.query(`
+      CREATE POLICY ${policy} ON ${qualified}
+        FOR ALL
+        USING (tenant_id = current_setting('app.tenant_id', true)::UUID)
+        WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::UUID)
+    `);
+  } catch (err) {
+    // Hot path runs ensureQuoteTables on every inventory request. Concurrent
+    // callers must not DROP/CREATE policies — duplicate_object is OK.
+    if (err.code !== '42710') throw err;
+  }
 }
 
 /**
@@ -269,6 +275,10 @@ export async function ensureQuoteTables(db, tenantId) {
   await db.query(
     `CREATE UNIQUE INDEX IF NOT EXISTS inventory_categories_name_uidx
         ON ${schema}.inventory_categories (tenant_id, lower(name))`
+  );
+  await db.query(
+    `ALTER TABLE ${schema}.inventory_skus
+        ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`
   );
   await db.query(
     `UPDATE ${schema}.inventory_skus

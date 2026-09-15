@@ -48,8 +48,11 @@ describe('POST /skus with hub Origin does not 500', () => {
   const USER = '11111111-1111-1111-1111-111111111111';
   const pool = {
     connect: async () => ({
-      query: async (sql) => {
+      query: async (sql, params) => {
         const compact = String(sql).replace(/\s+/g, ' ').trim();
+        if (compact.includes('.inventory_categories') && compact.includes('lower(name)')) {
+          return { rows: [{ name: 'Microphones' }] };
+        }
         if (compact.includes('INSERT INTO') && compact.includes('.inventory_skus')) {
           return {
             rows: [
@@ -106,7 +109,7 @@ describe('POST /skus with hub Origin does not 500', () => {
         Origin: 'https://hub.example.com',
         'X-Forwarded-Host': 'api.example.com',
       },
-      body: JSON.stringify({ name: 'SM58', daily_rate: 25 }),
+      body: JSON.stringify({ name: 'SM58', category: 'Microphones', daily_rate: 25 }),
     });
     assert.equal(res.status, 201);
     assert.equal(res.headers.get('access-control-allow-origin'), 'https://hub.example.com');
@@ -120,7 +123,7 @@ describe('POST /skus with hub Origin does not 500', () => {
         Origin: 'https://evil.example.net',
         'X-Forwarded-Host': 'api.example.com',
       },
-      body: JSON.stringify({ name: 'SM58', daily_rate: 25 }),
+      body: JSON.stringify({ name: 'SM58', category: 'Microphones', daily_rate: 25 }),
     });
     assert.notEqual(res.status, 500);
     assert.notEqual(res.headers.get('access-control-allow-origin'), 'https://evil.example.net');

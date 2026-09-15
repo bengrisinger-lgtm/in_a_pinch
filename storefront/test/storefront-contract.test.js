@@ -141,10 +141,14 @@ describe('IAP storefront contract', () => {
     assert.match(blob, /Hide from catalog/);
     assert.match(blob, /Change serial/);
     assert.match(blob, /listCategories/);
-    assert.match(blob, /iap-stock-categories/);
+    assert.match(blob, /Pick a category/);
+    assert.match(blob, /deleteCategory/);
+    assert.match(blob, /Show \{retired\.length\} retired serial/);
     assert.match(blob, /Add category/);
     assert.match(blob, /\/categories/);
-    assert.doesNotMatch(blob, /method:\s*['"]DELETE['"]/);
+    const invApiSrc = fs.readFileSync(path.join(root, 'src', 'lib', 'inventoryApi.ts'), 'utf8');
+    assert.match(invApiSrc, /method: 'DELETE'/);
+    assert.doesNotMatch(blob.replace(invApiSrc, ''), /method:\s*['"]DELETE['"]/);
     assert.doesNotMatch(blob, /x:\s*72,\s*y:\s*640/);
     assert.doesNotMatch(blob, /signer_index/);
     assert.doesNotMatch(blob, /PdfBlockEditor/);

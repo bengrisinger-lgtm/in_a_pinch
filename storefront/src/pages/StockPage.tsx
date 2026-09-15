@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import {
   createCategory,
+  deleteCategory,
   createSku,
   createUnit,
   InventoryApiError,
@@ -28,6 +29,7 @@ export default function StockPage({ email }: Props) {
   const [serials, setSerials] = useState<Record<string, string>>({});
   const [editing, setEditing] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  const [showRetired, setShowRetired] = useState<Record<string, boolean>>({});
 
   async function refresh() {
     const [data, cats] = await Promise.all([listSkus(), listCategories()]);
@@ -59,12 +61,16 @@ export default function StockPage({ email }: Props) {
 
   async function onCreateSku(e: FormEvent) {
     e.preventDefault();
+    if (!category.trim()) {
+      setError('Pick a category from the list.');
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
       await createSku({
         name: name.trim(),
-        category: category.trim() || undefined,
+        category: category.trim(),
         daily_rate: Number(rate),
       });
       setName('');
@@ -111,6 +117,38 @@ export default function StockPage({ email }: Props) {
     }
   }
 
+  async function onDeleteCategory(cat: InventoryCategory) {
+    if (!window.confirm(`Remove “${cat.name}” from the category list?`)) return;
+    setBusy(true);
+    setError(null);
+    try {
+      let data: { categories: InventoryCategory[] };
+      try {
+        data = await deleteCategory(cat.id);
+      } catch (err) {
+        if (err instanceof InventoryApiError && err.status === 409) {
+          const others = categories.filter((c) => c.id !== cat.id);
+          const fallback =
+            others.find((c) => c.name === 'Microphones')?.name || others[0]?.name || '';
+          const reassign = window
+            .prompt(`${err.message}\n\nReassign those SKUs to:`, fallback)
+            ?.trim();
+          if (!reassign) return;
+          data = await deleteCategory(cat.id, reassign);
+        } else {
+          throw err;
+        }
+      }
+      setCategories(data.categories);
+      if (category === cat.name) setCategory('');
+      await refresh();
+    } catch (err) {
+      setError(apiMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function run(fn: () => Promise<void>) {
     setBusy(true);
     setError(null);
@@ -145,14 +183,23 @@ export default function StockPage({ email }: Props) {
       <div className="category-manager">
         <h3>Categories</h3>
         <p className="muted">
-          Type a name to add it to the drop menu (Microphones, Speakers, Projectors, Lighting,
-          Mixers, or whatever comes next). The shop only shows a filter after a SKU uses that
-          name.
+          Add names here first, then pick from the list when you add a SKU — free typing is not
+          allowed. Remove a label with × (reassign SKUs if any still use it). The shop only
+          shows a filter after a SKU uses that name.
         </p>
         <div className="category-chips">
           {categories.map((cat) => (
-            <span className="tag" key={cat.id}>
+            <span className="category-chip" key={cat.id}>
               {cat.name}
+              <button
+                type="button"
+                className="category-chip-remove"
+                disabled={busy}
+                aria-label={`Remove category ${cat.name}`}
+                onClick={() => void onDeleteCategory(cat)}
+              >
+                ×
+              </button>
             </span>
           ))}
         </div>
@@ -185,18 +232,20 @@ export default function StockPage({ email }: Props) {
         </div>
         <div>
           <label htmlFor="skuCat">Category</label>
-          <input
+          <select
             id="skuCat"
-            list="iap-stock-categories"
             value={category}
             onChange={(e) => setCategory(e.target.value)}
-            placeholder="Type or pick — Microphones"
-          />
-          <datalist id="iap-stock-categories">
+            required
+            disabled={categories.length === 0}
+          >
+            <option value="">Pick a category…</option>
             {categories.map((cat) => (
-              <option key={cat.id} value={cat.name} />
+              <option key={cat.id} value={cat.name}>
+                {cat.name}
+              </option>
             ))}
-          </datalist>
+          </select>
         </div>
         <div>
           <label htmlFor="skuRate">Daily rate</label>
@@ -251,7 +300,9 @@ export default function StockPage({ email }: Props) {
               {Number(sku.daily_rate).toFixed(2)} / day
               {sku.active === false ? ' · Hidden from catalog' : ''}
             </p>
-            {(units[sku.id] || []).map((unit) => (
+            {(units[sku.id] || [])
+              .filter((unit) => unit.status === 'active' || showRetired[sku.id])
+              .map((unit) => (
               <div
                 className={`unit-row${unit.status !== 'active' ? ' retired' : ''}`}
                 key={unit.id}
@@ -361,6 +412,20 @@ export default function StockPage({ email }: Props) {
                 </div>
               </div>
             ))}
+            {(() => {
+              const retired = (units[sku.id] || []).filter((u) => u.status !== 'active');
+              if (!retired.length || showRetired[sku.id]) return null;
+              return (
+                <button
+                  type="button"
+                  className="linkish retired-toggle"
+                  disabled={busy}
+                  onClick={() => setShowRetired((prev) => ({ ...prev, [sku.id]: true }))}
+                >
+                  Show {retired.length} retired serial{retired.length === 1 ? '' : 's'}
+                </button>
+              );
+            })()}
             <div className="addrow stock-serial" style={{ marginTop: 12 }}>
               <input
                 value={serials[sku.id] || ''}

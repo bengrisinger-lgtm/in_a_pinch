@@ -8,6 +8,7 @@ import { createApp } from '../src/app.js';
 import { schemaNameFromTenantId, ensureQuoteTables } from '../src/schema.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const schemaSrc = fs.readFileSync(path.join(__dirname, '../src/schema.js'), 'utf8');
 const TENANT_A = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
 const TENANT_B = 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff';
 const SCHEMA_A = schemaNameFromTenantId(TENANT_A);
@@ -307,6 +308,12 @@ describe('ensureQuoteTables', () => {
     assert.match(sql, /payment_link_url TEXT/);
     assert.match(sql, /tenant_id UUID NOT NULL/);
     assert.doesNotMatch(sql, /quote_access_tokens/);
+    assert.match(sql, /inventory_skus[\s\S]*ADD COLUMN IF NOT EXISTS updated_at/);
+  });
+
+  it('does not DROP RLS policies on every inventory request', () => {
+    assert.doesNotMatch(schemaSrc, /DROP POLICY IF EXISTS tenant_isolation/);
+    assert.match(schemaSrc, /42710/);
   });
 });
 

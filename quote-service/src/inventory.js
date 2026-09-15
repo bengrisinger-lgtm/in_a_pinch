@@ -14,7 +14,13 @@ import {
 } from './schema.js';
 import { wrapWithTenant, withTenantTransaction } from './pool.js';
 import { actorUserId } from './auth.js';
-import { clipName, listCategories, upsertCategory } from './categories.js';
+import {
+  clipName,
+  listCategories,
+  removeCategory,
+  requireListedCategory,
+  upsertCategory,
+} from './categories.js';
 import { billingDays, isLoadOutBlocked, occupancyDays, parseHm } from './rentalPeriod.js';
 
 const UUID_RE =
@@ -189,6 +195,31 @@ export function inventoryRoutes(ctx) {
     }
   });
 
+  router.delete('/categories/:categoryId', staff, async (req, res) => {
+    const categoryId = req.params.categoryId;
+    if (!UUID_RE.test(categoryId)) {
+      return res.status(400).json({ error: 'categoryId must be a UUID' });
+    }
+    try {
+      const { tenantId, schema, db } = await scoped(pool, req);
+      await removeCategory(db, schema, tenantId, categoryId, req.body?.reassign_to);
+      const categories = await listCategories(db, schema, tenantId);
+      res.json({ categories });
+    } catch (err) {
+      if (err.status === 404) {
+        return res.status(404).json({ error: err.message });
+      }
+      if (err.status === 409) {
+        return res.status(409).json(err.body || { error: err.message });
+      }
+      if (err.status === 400) {
+        return res.status(400).json({ error: err.message });
+      }
+      req.log?.error?.({ err }, 'category delete failed');
+      res.status(500).json({ error: 'Failed to delete category' });
+    }
+  });
+
   router.post('/skus', staff, async (req, res) => {
     const tenantId = hmacTenantId(req);
     const name = clip(req.body?.name, NAME_MAX);
@@ -201,7 +232,7 @@ export function inventoryRoutes(ctx) {
     }
     try {
       const { schema, db } = await scoped(pool, req);
-      const category = await upsertCategory(db, schema, tenantId, req.body?.category);
+      const category = await requireListedCategory(db, schema, tenantId, req.body?.category);
       const { rows } = await db.query(
         `INSERT INTO ${schema}.inventory_skus
            (tenant_id, name, category, description, daily_rate)
@@ -217,6 +248,9 @@ export function inventoryRoutes(ctx) {
       );
       res.status(201).json({ sku: rows[0], schema });
     } catch (err) {
+      if (err.status === 400) {
+        return res.status(400).json({ error: err.message });
+      }
       req.log?.error?.({ err }, 'sku create failed');
       res.status(500).json({ error: 'Failed to create sku' });
     }
@@ -371,9 +405,17 @@ export function inventoryRoutes(ctx) {
       params.push(name);
       setParts.push(`name = $${params.length}`);
     }
+    let clearCategory = false;
     if (Object.prototype.hasOwnProperty.call(req.body || {}, 'category')) {
-      params.push(clipName(req.body.category));
-      setParts.push(`category = $${params.length}`);
+      const raw = req.body.category;
+      if (raw == null || (typeof raw === 'string' && !raw.trim())) {
+        clearCategory = true;
+        params.push(null);
+        setParts.push(`category = $${params.length}`);
+      } else {
+        params.push(clipName(req.body.category));
+        setParts.push(`category = $${params.length}`);
+      }
     }
     if (Object.prototype.hasOwnProperty.call(req.body || {}, 'daily_rate')) {
       const dailyRate = money(req.body.daily_rate, null);
@@ -392,10 +434,10 @@ export function inventoryRoutes(ctx) {
     }
     try {
       const { schema, db } = await scoped(pool, req);
-      if (Object.prototype.hasOwnProperty.call(req.body || {}, 'category')) {
+      if (Object.prototype.hasOwnProperty.call(req.body || {}, 'category') && !clearCategory) {
         const idx = setParts.findIndex((part) => part.startsWith('category ='));
         if (idx >= 0) {
-          params[idx] = await upsertCategory(db, schema, tenantId, req.body.category);
+          params[idx] = await requireListedCategory(db, schema, tenantId, req.body.category);
         }
       }
       if (req.body?.active === false) {
@@ -419,6 +461,9 @@ export function inventoryRoutes(ctx) {
       }
       res.json({ sku: rows[0], schema });
     } catch (err) {
+      if (err.status === 400) {
+        return res.status(400).json({ error: err.message });
+      }
       req.log?.error?.({ err }, 'sku patch failed');
       res.status(500).json({ error: 'Failed to update sku' });
     }
@@ -659,8 +704,8 @@ export function inventoryRoutes(ctx) {
     }
 
     try {
-      const schema = schemaNameFromTenantId(tenantId);
-      await ensureQuoteTables(pool, tenantId);
+      const { schema, db } = await scoped(pool, req);
+      await expireStaleHolds(db, schema, tenantId);
       const created = await withTenantTransaction(pool, tenantId, async (client) => {
         let targets = [];
         if (unitId) {

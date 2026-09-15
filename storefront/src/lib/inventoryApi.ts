@@ -97,6 +97,13 @@ export function renameCategory(categoryId: string, name: string) {
   });
 }
 
+export function deleteCategory(categoryId: string, reassignTo?: string) {
+  return invFetch<{ categories: InventoryCategory[] }>(`/categories/${categoryId}`, {
+    method: 'DELETE',
+    body: JSON.stringify(reassignTo ? { reassign_to: reassignTo } : {}),
+  });
+}
+
 export function listSkus(startsOn?: string, endsOn?: string) {
   const q =
     startsOn && endsOn
@@ -107,7 +114,7 @@ export function listSkus(startsOn?: string, endsOn?: string) {
 
 export function createSku(input: {
   name: string;
-  category?: string;
+  category: string;
   description?: string;
   daily_rate: number;
 }) {
