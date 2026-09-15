@@ -152,7 +152,15 @@ describe('IAP storefront contract', () => {
     assert.doesNotMatch(blob, /x:\s*72,\s*y:\s*640/);
     assert.doesNotMatch(blob, /signer_index/);
     assert.doesNotMatch(blob, /PdfBlockEditor/);
-    assert.doesNotMatch(blob, /localStorage|sessionStorage|jsonwebtoken|COOKIE_SECRET/);
+    const cartPersistSrc = fs.readFileSync(
+      path.join(root, 'src', 'lib', 'cartPersistence.ts'),
+      'utf8'
+    );
+    const blobNoCartPersist = blob.replace(cartPersistSrc, '');
+    assert.doesNotMatch(blobNoCartPersist, /localStorage|sessionStorage|jsonwebtoken|COOKIE_SECRET/);
+    assert.match(cartPersistSrc, /sessionStorage/);
+    assert.match(blob, /rented by another customer/);
+    assert.match(blob, /renterHasSigned/);
     assert.doesNotMatch(blob, /@securedbackend\/sdk\/server/);
     assert.doesNotMatch(blob, /placeholder=["']1234 5678|Name on card|id=["']signatureName["']/);
     assert.doesNotMatch(blob, /sq-card-number|Web Payments SDK|payments\.squareup/);

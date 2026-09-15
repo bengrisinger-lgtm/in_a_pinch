@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { COMPANY_SIGNER } from '../lib/companySigner.js';
 import { formatPrettyTime, formatUsd, parseHm } from '../lib/dates';
+import { renterHasSigned } from '../lib/envelopeSigning.js';
 import { kit } from '../lib/kit';
 import { cancelOrder, signingHref } from '../lib/orderActions';
 import { tenantConsoleHref } from '../lib/consoleHref';
@@ -66,7 +67,7 @@ export default function OrdersPage({ email }: Props) {
         try {
           const detail = await kit().signing.get(q.envelope_id);
           if (cancelled) return;
-          if (detail.envelope.status === 'completed') {
+          if (renterHasSigned(detail, q.customer_email || undefined)) {
             await markAwaitingPayment(q.id);
             if (!cancelled) await refresh();
           }
@@ -134,8 +135,8 @@ export default function OrdersPage({ email }: Props) {
         <p className="muted">{email}</p>
       </div>
       <p className="banner">
-        Cart holds last 15 minutes. After the agreement is sent they last 2 hours. After both
-        people sign, unpaid holds last 24 hours, then the reservation cancels so the gear is
+        Cart holds last 15 minutes. After the agreement is sent they last 2 hours. After the
+        renter signs, unpaid holds last 24 hours, then the order cancels so the gear is
         free. Paid bookings do not expire. Company signer is {COMPANY_SIGNER.name} (
         {COMPANY_SIGNER.email}).
       </p>

@@ -175,7 +175,7 @@ const guestIdentity = {
 };
 
 describe('IAP-G guest pinch-service access', () => {
-  it('guest can list SKUs and checkout; created_by is null', async () => {
+  it('guest can list SKUs and checkout; created_by is the guest session id', async () => {
     const { server, url, pool } = await listen(guestIdentity);
     try {
       const skus = await fetch(`${url}/api/v1/quotes/inventory/skus`);
@@ -200,7 +200,7 @@ describe('IAP-G guest pinch-service access', () => {
       );
       assert.ok(insert);
       assert.equal(insert.params[0], TENANT_A);
-      assert.equal(insert.params[9], null);
+      assert.equal(insert.params[9], GUEST_SID);
     } finally {
       await new Promise((r) => server.close(r));
     }

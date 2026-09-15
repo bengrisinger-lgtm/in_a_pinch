@@ -251,7 +251,13 @@ describe('quote store HMAC scope', () => {
     assert.equal(body.schema, SCHEMA_A);
     assert.equal(body.quote.document_id, documentId);
     assert.equal(body.quote.envelope_id, envelopeId);
-    const update = pool.calls.find((c) => c.sql.startsWith('UPDATE') && c.sql.includes('.quotes'));
+    const update = pool.calls.find(
+      (c) =>
+        c.sql.includes('UPDATE') &&
+        c.sql.includes('.quotes') &&
+        c.sql.includes('document_id = COALESCE')
+    );
+    assert.ok(update, 'PATCH quote UPDATE must be present');
     assert.match(update.sql, new RegExp(`UPDATE ${SCHEMA_A}\\.quotes`));
     assert.equal(update.params[0], quoteId);
     assert.equal(update.params[1], TENANT_A);

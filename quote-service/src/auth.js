@@ -18,6 +18,13 @@ export function actorUserId(req) {
   return id;
 }
 
+/** Guest or staff session id for checkout attribution (not staff-only). */
+export function sessionUserId(req) {
+  const id = req?.identity?.userId;
+  if (typeof id !== 'string' || !id.trim()) return null;
+  return id.trim();
+}
+
 export function requireTenant({ verify, expectedTenantId } = {}) {
   if (typeof verify !== 'function') {
     throw new Error('requireTenant needs verify(req) from createServerClient().auth.verifyGatewayHmac');

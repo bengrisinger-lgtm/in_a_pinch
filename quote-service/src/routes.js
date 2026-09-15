@@ -7,7 +7,7 @@ import {
   HOLD_TTL_UNPAID_SIGNED_MINUTES,
 } from './schema.js';
 import { wrapWithTenant, withTenantTransaction } from './pool.js';
-import { actorUserId, isStaffIdentity } from './auth.js';
+import { actorUserId, isStaffIdentity, sessionUserId } from './auth.js';
 import { deliveryFeeFromOneWay } from './delivery.js';
 import { applyPaidQuote, applyRefundedQuote } from './paid.js';
 import { dollarsToCents } from './square.js';
@@ -148,6 +148,7 @@ export function quoteRoutes(ctx) {
       const schemaName = (
         await ensureQuoteTables(pool, tenantId)
       ).schema;
+      await expireStaleHolds(wrapWithTenant(pool, tenantId), schemaName, tenantId);
       const result = await withTenantTransaction(pool, tenantId, async (client) => {
         const holds = await client.query(
           `SELECT r.id, r.sku_id, r.unit_id, r.starts_on::text AS starts_on,
@@ -283,7 +284,7 @@ export function quoteRoutes(ctx) {
             deliveryFee,
             subtotal,
             total,
-            actorUserId(req),
+            sessionUserId(req) || actorUserId(req),
             fulfillment,
             eventType,
             startsOn,
@@ -322,7 +323,7 @@ export function quoteRoutes(ctx) {
         schema: schemaName,
         renter_magic_link: null,
         hold_ttl_note:
-          'Cart holds last 15 minutes. After send they last 2 hours. After both sign, unpaid holds last 24 hours. Paid bookings do not expire.',
+          'Cart holds last 15 minutes. After the agreement is sent, signing holds last 2 hours. After the renter signs, unpaid holds last 24 hours. Paid bookings do not expire.',
       });
     } catch (err) {
       if (err.status === 409) {
@@ -480,6 +481,7 @@ export function quoteRoutes(ctx) {
     }
     try {
       const { schema, db } = await scoped(req);
+      await expireStaleHolds(db, schema, tenantId);
       const { rows } = await db.query(
         `UPDATE ${schema}.quotes
             SET document_id = COALESCE($3, document_id),
@@ -623,13 +625,14 @@ export function quoteRoutes(ctx) {
     }
   });
 
-  router.post('/:id/awaiting-payment', staff, async (req, res) => {
+  router.post('/:id/awaiting-payment', async (req, res) => {
     const tenantId = hmacTenantId(req);
     if (!UUID_RE.test(req.params.id)) {
       return res.status(400).json({ error: 'id must be a UUID' });
     }
     try {
       const { schema, db } = await scoped(req);
+      await expireStaleHolds(db, schema, tenantId);
       const found = await db.query(
         `SELECT id, status FROM ${schema}.quotes WHERE id = $1 AND tenant_id = $2`,
         [req.params.id, tenantId]
@@ -645,6 +648,9 @@ export function quoteRoutes(ctx) {
       }
       if (found.rows[0].status === 'awaiting_payment') {
         return res.json({ quote: found.rows[0], schema });
+      }
+      if (found.rows[0].status !== 'signing') {
+        return res.status(409).json({ error: 'Quote is not awaiting renter signature' });
       }
       await extendQuoteHolds(db, schema, tenantId, req.params.id, HOLD_TTL_UNPAID_SIGNED_MINUTES);
       const { rows } = await db.query(

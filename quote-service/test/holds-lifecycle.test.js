@@ -202,7 +202,33 @@ describe('hold TTL tiers and cancel', () => {
     await new Promise((r) => server.close(r));
   });
 
-  it('extends holds 24 hours after both signed, and does not re-extend', async () => {
+  it('guest may POST awaiting-payment when quote is in signing', async () => {
+    const pool = makePool({ status: 'signing' });
+    const app = createApp({
+      pool,
+      verify: () => ({
+        tenantId: TENANT_A,
+        userId: '99999999-9999-4999-8999-999999999999',
+        role: 'guest',
+        email: '',
+        projectId: 'p1',
+        impersonatorUserId: null,
+        clientIp: '127.0.0.1',
+      }),
+    });
+    const server = http.createServer(app);
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    const url = `http://127.0.0.1:${server.address().port}`;
+    const res = await fetch(`${url}/api/v1/quotes/${QUOTE_ID}/awaiting-payment`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    assert.equal(res.status, 200);
+    await new Promise((r) => server.close(r));
+  });
+
+  it('extends holds 24 hours after renter signed (awaiting-payment), and does not re-extend', async () => {
     const pool = makePool({ status: 'signing' });
     const { server, url } = await listen(pool);
     const first = await fetch(`${url}/api/v1/quotes/${QUOTE_ID}/awaiting-payment`, {

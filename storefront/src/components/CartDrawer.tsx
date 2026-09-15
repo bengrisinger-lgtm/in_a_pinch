@@ -16,6 +16,9 @@ import {
 } from '../lib/quoteApi';
 import AgreementPanel from './AgreementPanel';
 import type { SentAgreement } from '../lib/agreement';
+import { CART_UNAVAILABLE_MSG } from '../lib/cartAvailability';
+import { createHolds } from '../lib/inventoryApi';
+import { renterHasSigned } from '../lib/envelopeSigning.js';
 
 const EVENT_TYPES = [
   'Wedding',
@@ -28,6 +31,7 @@ const EVENT_TYPES = [
 
 type Props = {
   cart: CartLine[];
+  setCart: (next: CartLine[] | ((prev: CartLine[]) => CartLine[])) => void;
   isStaff: boolean;
   startsOn: string;
   endsOn: string;
@@ -43,6 +47,7 @@ type Props = {
 
 export default function CartDrawer({
   cart,
+  setCart,
   isStaff,
   startsOn,
   endsOn,
@@ -91,7 +96,10 @@ export default function CartDrawer({
       try {
         const detail = await kit().signing.get(saved!.envelope_id as string);
         if (cancelled) return;
-        if (detail.envelope.status === 'completed' && saved!.status !== 'awaiting_payment') {
+        if (
+          saved!.status !== 'awaiting_payment' &&
+          renterHasSigned(detail, email.trim())
+        ) {
           const body = await markAwaitingPayment(saved!.id);
           if (!cancelled) setSaved((q) => (q ? { ...q, status: body.quote.status } : q));
         }
@@ -105,12 +113,60 @@ export default function CartDrawer({
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [saved?.id, saved?.envelope_id, saved?.status, paid]);
+  }, [saved?.id, saved?.envelope_id, saved?.status, paid, email]);
+
+  async function ensureCheckoutHolds(): Promise<string[]> {
+    const nextLines: CartLine[] = [];
+    const allHoldIds: string[] = [];
+    for (const line of cart) {
+      if (line.unavailable) {
+        nextLines.push(line);
+        continue;
+      }
+      if (line.holdIds.length) {
+        allHoldIds.push(...line.holdIds);
+        nextLines.push(line);
+        continue;
+      }
+      const data = await createHolds({
+        sku_id: line.skuId,
+        quantity: line.quantity,
+        starts_on: line.startsOn,
+        ends_on: line.endsOn,
+        load_in_time: line.loadIn,
+        load_out_time: line.loadOut,
+      });
+      const ids = data.holds.map((h) => h.id);
+      allHoldIds.push(...ids);
+      nextLines.push({
+        ...line,
+        holdIds: ids,
+        serials: data.holds.map((h) => h.serial_number || h.unit_id),
+        heldUntil: data.holds[0]?.held_until || null,
+        unavailable: false,
+      });
+    }
+    setCart(nextLines);
+    return allHoldIds;
+  }
 
   async function saveDetails(e: React.FormEvent) {
     e.preventDefault();
-    if (!holdIds.length) {
-      setError('Cart holds expired or empty. Add gear again from Rentals.');
+    if (cart.some((line) => line.unavailable)) {
+      setError(CART_UNAVAILABLE_MSG);
+      return;
+    }
+    let checkoutHoldIds = holdIds;
+    if (!checkoutHoldIds.length) {
+      try {
+        checkoutHoldIds = await ensureCheckoutHolds();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Could not reserve gear for checkout');
+        return;
+      }
+    }
+    if (!checkoutHoldIds.length) {
+      setError('Cart is empty or gear is unavailable. Update your cart from Rentals.');
       return;
     }
     setSaving(true);
@@ -126,7 +182,7 @@ export default function CartDrawer({
         delivery_address: fulfillment === 'delivery' ? address.trim() : undefined,
         one_way_miles: fulfillment === 'delivery' ? Number(miles) : undefined,
         one_way_minutes: fulfillment === 'delivery' ? Number(minutes) : undefined,
-        hold_ids: holdIds,
+        hold_ids: checkoutHoldIds,
       });
       let quote = body.quote;
       try {
@@ -356,8 +412,13 @@ export default function CartDrawer({
               <div className="cartitem" key={line.skuId}>
                 <div>
                   <strong>{line.name}</strong>
+                  {line.unavailable ? (
+                    <p className="error">{CART_UNAVAILABLE_MSG}</p>
+                  ) : null}
                   <div className="muted">
-                    Qty {line.quantity} · {line.serials.join(', ')}
+                    Qty {line.quantity}
+                    {line.serials.length ? ` · ${line.serials.join(', ')}` : ''}
+                    {!line.holdIds.length && !line.unavailable ? ' · not reserved' : ''}
                   </div>
                   <div className="muted">
                     {formatPrettyDate(startsOn)} {formatPrettyTime(loadIn)} →{' '}
@@ -383,8 +444,8 @@ export default function CartDrawer({
               </div>
               {ttl && isStaff ? (
                 <p className="muted">
-                  Cart hold until {new Date(ttl).toLocaleString()} (15 minutes before they
-                  sign). After send: 2 hours. After both sign, unpaid: 24 hours.
+                  Cart hold until {new Date(ttl).toLocaleString()} (15 minutes while shopping).
+                  After send: 2 hours to sign. After renter signs, unpaid: 24 hours.
                 </p>
               ) : null}
             </div>

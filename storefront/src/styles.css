@@ -481,6 +481,12 @@ footer p { color: #c9bbb2; font-size: 12px; }
   max-width: 440px;
   margin-top: 18vh;
 }
+.session-idle-countdown {
+  font-variant-numeric: tabular-nums;
+  font-size: 1.75rem;
+  text-align: center;
+  margin: 16px 0 8px;
+}
 .drawer, .modal {
   max-width: 900px;
   margin: 16px auto;

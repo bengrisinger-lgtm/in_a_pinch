@@ -34,6 +34,8 @@ export type CartLine = {
   endsOn: string;
   loadIn: string;
   loadOut: string;
+  /** No active hold and not enough units for the saved rental dates. */
+  unavailable?: boolean;
 };
 
 type Props = {
@@ -212,6 +214,7 @@ export default function CatalogPage({ email, staff, consumer = false, cart, setC
           endsOn: applied.endsOn,
           loadIn: applied.loadIn,
           loadOut: applied.loadOut,
+          unavailable: false,
         },
       ]);
       reloadCatalog();

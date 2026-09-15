@@ -166,7 +166,7 @@ const TABLES = [
 export const HOLD_TTL_CART_MINUTES = 15;
 /** After the agreement is sent (signing in progress). */
 export const HOLD_TTL_SIGNING_MINUTES = 120;
-/** After both kit signers finished, still unpaid. */
+/** After the renter/customer kit signer finished, still unpaid (staff may be pending). */
 export const HOLD_TTL_UNPAID_SIGNED_MINUTES = 1440;
 /** @deprecated use HOLD_TTL_CART_MINUTES — kept so old tests/imports fail loudly */
 export const HOLD_TTL_HOURS = HOLD_TTL_CART_MINUTES / 60;
