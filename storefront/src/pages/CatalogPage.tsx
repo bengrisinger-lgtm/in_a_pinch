@@ -7,7 +7,6 @@ import {
   formatUsd,
   LOAD_IN_DEFAULT,
   LOAD_OUT_DEFAULT,
-  LOAD_OUT_POLICY,
   localIsoDate,
   money,
   needsVenueLoadOutNote,
@@ -260,10 +259,10 @@ export default function CatalogPage({ email, staff, consumer = false, cart, setC
           <p className="muted">{staff ? `Staff session · ${email}` : 'No account required'}</p>
         </div>
 
-        <p className="banner">
+        <p className="banner catalog-dates-banner">
           {staff
-            ? 'Signed in as staff. Add-to-cart places a 15-minute hold on those serials. After they start signing it lasts 2 hours; after both sign, unpaid holds last 24 hours. Checkout is details, kit agreement on the signer app, then Square — no card fields here.'
-            : 'Pick dates to see what is free. Add to cart, enter your details, sign the agreement, then pay on Square. No login and no card fields on this page. A saved account for faster checkout is later if you want one.'}
+            ? 'Set your event load-in and load-out dates and times below. The catalog shows what is free for that window.'
+            : 'Start here: pick your event load-in and load-out dates and times below. We show gear that is free for that window.'}
         </p>
         {error ? <p className="banner error">{error}</p> : null}
 
@@ -312,10 +311,6 @@ export default function CatalogPage({ email, staff, consumer = false, cart, setC
             </button>
           </div>
         </div>
-        <p className="muted datebar-hint">
-          Billed in 24-hour periods from load-in, not by the calendar boxes. Friday 3:00 p.m. to
-          Saturday 2:00 p.m. is 1 day. {LOAD_OUT_POLICY}
-        </p>
         {needsVenueLoadOutNote(loadOut) ? (
           <p className="banner">
             This load-out is after midnight. Coordinate that time with the venue before you confirm.

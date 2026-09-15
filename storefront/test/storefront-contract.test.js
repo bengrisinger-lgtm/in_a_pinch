@@ -54,7 +54,7 @@ describe('IAP storefront contract', () => {
     assert.match(blob, /12:30 a.m. to 7:00 a.m/);
     assert.match(blob, /coordinate a load-out time with the venue/);
     assert.match(blob, /billingDays/);
-    assert.match(blob, /up to 24 hours/);
+    assert.doesNotMatch(blob, /up to 24 hours/);
     assert.match(blob, /range-start/);
     assert.match(blob, /onPreview/);
     assert.match(blob, /formatPrettyDate/);
@@ -101,8 +101,9 @@ describe('IAP storefront contract', () => {
     assert.match(agreementSrc, /if \(consumer\)/);
     assert.match(blob, /signedAgreementTitle/);
     assert.match(blob, /Signed Service Agreement/);
-    assert.match(blob, /Billed in 24-hour periods/);
-    assert.match(blob, /Friday 3:00 p.m. to/);
+    assert.match(blob, /catalog-dates-banner/);
+    assert.match(blob, /load-in and load-out dates and times below/);
+    assert.doesNotMatch(blob, /Billed in 24-hour periods/);
     assert.match(blob, /We sent the Standard Rental Agreement/);
     assert.match(blob, /Sending the Standard Rental Agreement/);
     assert.match(agreementSrc, /Send for signature/);
