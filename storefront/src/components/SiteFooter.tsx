@@ -10,8 +10,8 @@ export default function SiteFooter({ staff, consumer = false }: Props) {
   if (consumer) {
     return (
       <footer className="site-footer consumer-footer" id="contact">
-        <img className="footer-logo" src="/pinch-logo.png" alt="In A Pinch AV" />
-        <p>In A Pinch AV · Denver, Colorado</p>
+        <img className="footer-logo" src="/iap-logo-lockup.png" alt="In A Pinch AV" />
+        <p>Denver, Colorado</p>
         <p>Audio · Video · Lighting · Equipment rentals</p>
         {staff ? (
           <p>Staff session</p>
@@ -40,7 +40,7 @@ export default function SiteFooter({ staff, consumer = false }: Props) {
       <div className="site-footer-inner">
         <div>
           <h2>About</h2>
-          <p>In a Pinch AV</p>
+          <img className="footer-logo hub-footer-logo" src="/iap-logo-badge.png" alt="In A Pinch AV" />
           <p>Denver, Colorado</p>
           <p>Audio · Video · Lighting · Equipment rentals</p>
         </div>

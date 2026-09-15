@@ -207,6 +207,25 @@ describe('POST /api/v1/quotes/checkout', () => {
     await new Promise((r) => server.close(r));
   });
 
+  it('bills Friday 3 p.m. to Saturday 2 p.m. as one day, not two calendar days', async () => {
+    const pool = makePool({ loadIn: '15:00:00', loadOut: '14:00:00' });
+    const { server, url } = await listen(pool);
+    const res = await fetch(`${url}/api/v1/quotes/checkout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Alex Renter',
+        email: 'alex@example.com',
+        fulfillment: 'pickup',
+        hold_ids: [HOLD_A, HOLD_B],
+      }),
+    });
+    assert.equal(res.status, 201);
+    const body = await res.json();
+    assert.equal(Number(body.quote.subtotal), 50);
+    await new Promise((r) => server.close(r));
+  });
+
   it('delivery quote: server computes 4-leg fee, not a client delivery_fee', async () => {
     const pool = makePool();
     const { server, url } = await listen(pool);

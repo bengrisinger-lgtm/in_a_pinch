@@ -133,6 +133,15 @@ const TABLES = [
     `,
   },
   {
+    name: 'inventory_categories',
+    ddl: `
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id UUID NOT NULL,
+      name TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    `,
+  },
+  {
     name: 'inventory_reservations',
     ddl: `
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -204,6 +213,35 @@ export async function extendQuoteHolds(db, schema, tenantId, quoteId, minutes) {
   return rows;
 }
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Cart holds only (no quote yet). Restarts the 15-minute window. */
+export async function extendCartHolds(db, schema, tenantId, holdIds, minutes = HOLD_TTL_CART_MINUTES) {
+  const mins = Number(minutes);
+  if (!Number.isInteger(mins) || mins < 1) {
+    throw new Error('hold minutes must be a positive integer');
+  }
+  const ids = [...new Set((Array.isArray(holdIds) ? holdIds : []).filter((id) => UUID_RE.test(id)))];
+  if (!ids.length) {
+    const err = new Error('hold_ids are required');
+    err.status = 400;
+    throw err;
+  }
+  const { rows } = await db.query(
+    `UPDATE ${schema}.inventory_reservations
+        SET held_until = now() + ($3::int * interval '1 minute')
+      WHERE tenant_id = $1
+        AND id = ANY($2::uuid[])
+        AND status = 'held'
+        AND quote_id IS NULL
+        AND held_until > now()
+      RETURNING id, held_until`,
+    [tenantId, ids, mins]
+  );
+  return { ids, rows };
+}
+
 async function forceRls(db, qualified, table) {
   await db.query(`ALTER TABLE ${qualified} ENABLE ROW LEVEL SECURITY`);
   await db.query(`ALTER TABLE ${qualified} FORCE ROW LEVEL SECURITY`);
@@ -228,6 +266,15 @@ export async function ensureQuoteTables(db, tenantId) {
     await db.query(`CREATE TABLE IF NOT EXISTS ${qualified} (${table.ddl})`);
     await forceRls(db, qualified, name);
   }
+  await db.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS inventory_categories_name_uidx
+        ON ${schema}.inventory_categories (tenant_id, lower(name))`
+  );
+  await db.query(
+    `UPDATE ${schema}.inventory_skus
+        SET category = 'Microphones', updated_at = now()
+      WHERE category = 'Microphone'`
+  );
   await db.query(
     `CREATE INDEX IF NOT EXISTS inventory_units_sku_idx ON ${schema}.inventory_units (sku_id)`
   );

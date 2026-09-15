@@ -11,7 +11,7 @@ import { actorUserId, isStaffIdentity } from './auth.js';
 import { deliveryFeeFromOneWay } from './delivery.js';
 import { applyPaidQuote, applyRefundedQuote } from './paid.js';
 import { dollarsToCents } from './square.js';
-import { billingDays, occupancyDays, parseHm } from './rentalPeriod.js';
+import { billingDays, LOAD_IN_DEFAULT, LOAD_OUT_DEFAULT, parseHm } from './rentalPeriod.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const UUID_RE =
@@ -50,13 +50,11 @@ function money(raw, fallback = 0) {
 }
 
 function billedDaysFromHold(row) {
-  const loadIn = parseHm(row.load_in_time);
-  const loadOut = parseHm(row.load_out_time);
-  if (loadIn && loadOut) {
-    const n = billingDays(row.starts_on, loadIn, row.ends_on, loadOut);
-    if (n != null) return n;
-  }
-  return occupancyDays(row.starts_on, row.ends_on);
+  const loadIn = parseHm(row.load_in_time) || LOAD_IN_DEFAULT;
+  const loadOut = parseHm(row.load_out_time) || LOAD_OUT_DEFAULT;
+  const n = billingDays(row.starts_on, loadIn, row.ends_on, loadOut);
+  if (n != null) return n;
+  return 1;
 }
 
 export function quoteRoutes(ctx) {

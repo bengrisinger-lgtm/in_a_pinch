@@ -123,7 +123,10 @@ function makePool() {
       return { rows: [], rowCount: 1 };
     }
     if (compact.includes('UPDATE') && compact.includes('inventory_reservations')) {
-      return { rows: [], rowCount: 1 };
+      return {
+        rows: [{ id: HOLD_A, held_until: '2099-01-01T00:00:15.000Z' }],
+        rowCount: 1,
+      };
     }
     return { rows: [], rowCount: 0 };
   }
@@ -203,6 +206,22 @@ describe('IAP-G guest pinch-service access', () => {
     }
   });
 
+  it('guest can extend cart holds', async () => {
+    const { server, url } = await listen(guestIdentity);
+    try {
+      const res = await fetch(`${url}/api/v1/quotes/inventory/holds/extend`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hold_ids: [HOLD_A] }),
+      });
+      const body = await res.json().catch(() => ({}));
+      assert.equal(res.status, 200, JSON.stringify(body));
+      assert.equal(body.holds[0].id, HOLD_A);
+    } finally {
+      await new Promise((r) => server.close(r));
+    }
+  });
+
   it('guest cannot create SKUs or mark paid', async () => {
     const { server, url } = await listen(guestIdentity);
     try {
@@ -212,6 +231,15 @@ describe('IAP-G guest pinch-service access', () => {
         body: JSON.stringify({ name: 'SM58', daily_rate: 25 }),
       });
       assert.equal(sku.status, 401);
+
+      const cats = await fetch(`${url}/api/v1/quotes/inventory/categories`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Microphones' }),
+      });
+      assert.equal(cats.status, 401);
+      const catList = await fetch(`${url}/api/v1/quotes/inventory/categories`);
+      assert.equal(catList.status, 401);
 
       const list = await fetch(`${url}/api/v1/quotes`);
       assert.equal(list.status, 401);

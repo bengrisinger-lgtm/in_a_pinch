@@ -70,5 +70,7 @@ describe('billingDays', () => {
       return Math.max(1, Math.ceil((b - a) / 86400000 - 1e-9));
     }
     assert.equal(billingDays('2026-09-14', '20:00', '2026-09-15', '09:00'), 1);
+    assert.equal(billingDays('2026-09-18', '15:00', '2026-09-19', '14:00'), 1);
+    assert.equal(billingDays('2026-09-18', '08:00', '2026-09-19', '20:00'), 2);
   });
 });

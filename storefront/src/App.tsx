@@ -11,9 +11,15 @@ import {
 } from './lib/kit';
 import { tenantConsoleHref } from './lib/consoleHref';
 import CartDrawer from './components/CartDrawer';
+import StillShoppingModal from './components/StillShoppingModal';
 import SiteFooter from './components/SiteFooter';
 import { billingDays } from './lib/dates';
-import { cancelHold } from './lib/inventoryApi';
+import {
+  earliestHeldUntilMs,
+  expireDelayMs,
+  stillShoppingDelayMs,
+} from './lib/cartHoldIdle.js';
+import { cancelHold, extendHolds } from './lib/inventoryApi';
 import CatalogPage, { type CartLine } from './pages/CatalogPage';
 import HubHome from './pages/HubHome';
 import OrdersPage from './pages/OrdersPage';
@@ -30,18 +36,18 @@ export default function App() {
   const [cartOpen, setCartOpen] = useState(false);
   const [catalogEpoch, setCatalogEpoch] = useState(0);
   const [sessionError, setSessionError] = useState<string | null>(null);
+  const [checkoutLocked, setCheckoutLocked] = useState(false);
+  const [stillShopping, setStillShopping] = useState(false);
+  const [keepingHold, setKeepingHold] = useState(false);
 
   function bumpCatalog() {
     setCatalogEpoch((n) => n + 1);
   }
 
   useEffect(() => {
-    const open = () => setCartOpen(true);
     const refresh = () => bumpCatalog();
-    window.addEventListener('iap-open-cart', open);
     window.addEventListener('iap-catalog-refresh', refresh);
     return () => {
-      window.removeEventListener('iap-open-cart', open);
       window.removeEventListener('iap-catalog-refresh', refresh);
     };
   }, []);
@@ -105,6 +111,59 @@ export default function App() {
     redirectToLogin();
   }
 
+  async function releaseCartHolds() {
+    const ids = cart.flatMap((line) => line.holdIds);
+    await Promise.allSettled(ids.map((id) => cancelHold(id)));
+    setCart([]);
+    setCartOpen(false);
+    setStillShopping(false);
+    setCheckoutLocked(false);
+    bumpCatalog();
+  }
+
+  useEffect(() => {
+    if (checkoutLocked || cart.length === 0) {
+      setStillShopping(false);
+      return;
+    }
+    const expiry = earliestHeldUntilMs(cart);
+    if (expiry == null) return;
+    const warnIn = stillShoppingDelayMs(expiry) ?? 0;
+    const expireIn = expireDelayMs(expiry) ?? 0;
+    const warnT = window.setTimeout(() => setStillShopping(true), Math.max(0, warnIn));
+    const expT = window.setTimeout(() => {
+      void releaseCartHolds();
+    }, Math.max(0, expireIn));
+    return () => {
+      window.clearTimeout(warnT);
+      window.clearTimeout(expT);
+    };
+  }, [cart, checkoutLocked]);
+
+  async function keepShopping() {
+    const ids = cart.flatMap((line) => line.holdIds);
+    if (!ids.length) {
+      setStillShopping(false);
+      return;
+    }
+    setKeepingHold(true);
+    try {
+      const data = await extendHolds(ids);
+      const byId = new Map(data.holds.map((h) => [h.id, h.held_until]));
+      setCart((prev) =>
+        prev.map((line) => ({
+          ...line,
+          heldUntil: line.holdIds.reduce((acc, id) => byId.get(id) || acc, line.heldUntil),
+        }))
+      );
+      setStillShopping(false);
+    } catch {
+      await releaseCartHolds();
+    } finally {
+      setKeepingHold(false);
+    }
+  }
+
   async function removeLine(skuId: string) {
     const line = cart.find((l) => l.skuId === skuId);
     if (!line) return;
@@ -141,15 +200,9 @@ export default function App() {
     <div className={consumer ? 'app-shell consumer-shell' : 'app-shell'}>
       <header>
         <div className="nav">
-          {consumer ? (
-            <a className="wordmark" href="#rentals">
-              <img className="nav-logo" src="/pinch-logo.png" alt="In A Pinch AV" />
-            </a>
-          ) : (
-            <a className="wordmark" href={staffTools ? '#home' : '#rentals'}>
-              In a Pinch AV
-            </a>
-          )}
+          <a className="wordmark" href={staffTools ? '#home' : '#rentals'}>
+            <img className="nav-logo" src="/iap-logo-badge.png" alt="In A Pinch AV" />
+          </a>
           <nav>
             {staffTools ? <a href="#home">Hub</a> : null}
             <a href="#rentals">Rentals</a>
@@ -167,17 +220,17 @@ export default function App() {
                 Sign out
               </button>
             ) : null}
-            {consumer ? (
-              <a className="staff-nav-link" href={staffLoginHref(staffHubHref())}>
-                Staff
-              </a>
-            ) : null}
             {catalogView || cartCount > 0 ? (
               <button className="cartpill" type="button" onClick={() => setCartOpen(true)}>
                 Order • {cartCount}
               </button>
             ) : null}
           </nav>
+          {consumer ? (
+            <a className="staff-nav-link" href={staffLoginHref(staffHubHref())}>
+              Staff
+            </a>
+          ) : null}
         </div>
       </header>
       {staffTools && view === 'home' ? <HubHome email={user.email} /> : null}
@@ -209,21 +262,21 @@ export default function App() {
           onClose={() => setCartOpen(false)}
           onRemove={removeLine}
           onReleaseAll={() => {
-            const ids = cart.flatMap((line) => line.holdIds);
-            void (async () => {
-              await Promise.allSettled(ids.map((id) => cancelHold(id)));
-              setCart([]);
-              setCartOpen(false);
-              bumpCatalog();
-            })();
+            void releaseCartHolds();
           }}
+          onCheckoutStarted={() => setCheckoutLocked(true)}
           onOrderCancelled={() => {
             setCart([]);
             setCartOpen(false);
+            setCheckoutLocked(false);
+            setStillShopping(false);
             bumpCatalog();
             window.location.hash = '#rentals';
           }}
         />
+      ) : null}
+      {stillShopping ? (
+        <StillShoppingModal busy={keepingHold} onContinue={() => void keepShopping()} />
       ) : null}
       <SiteFooter staff={staffTools} consumer={consumer} />
     </div>

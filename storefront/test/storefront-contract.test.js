@@ -32,13 +32,18 @@ describe('IAP storefront contract', () => {
     assert.match(blob, /isConsumerSurface/);
     assert.match(blob, /staffHubHref/);
     assert.match(blob, /staffTools/);
-    assert.match(blob, /pinch-logo\.png/);
+    assert.match(blob, /iap-logo-badge\.png/);
+    assert.match(footerSrc, /iap-logo-lockup\.png/);
+    assert.match(appSrc, /staff-nav-link/);
+    assert.match(appSrc, /<\/nav>[\s\S]*staff-nav-link/);
     assert.match(blob, /Professional gear without the giant rental-house price tag/);
     const indexHtml = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
     assert.match(indexHtml, /In A Pinch AV \| Denver AV Rentals/);
+    assert.match(indexHtml, /iap-logo-badge\.png/);
     assert.match(blob, /staffLoginHref\(staffHubHref\(\)\)/);
     assert.match(fs.readFileSync(path.join(root, 'src', 'lib', 'kit.ts'), 'utf8'), /VITE_STOREFRONT_SURFACE/);
-    assert.ok(fs.existsSync(path.join(root, 'public', 'pinch-logo.png')));
+    assert.ok(fs.existsSync(path.join(root, 'public', 'iap-logo-badge.png')));
+    assert.ok(fs.existsSync(path.join(root, 'public', 'iap-logo-lockup.png')));
     const deploySrc = fs.readFileSync(path.join(root, 'deploy.ps1'), 'utf8');
     assert.match(deploySrc, /coming-soon/);
     assert.match(deploySrc, /Console overlay skipped on landing slug/);
@@ -85,9 +90,19 @@ describe('IAP storefront contract', () => {
       path.join(root, 'src', 'components', 'AgreementPanel.tsx'),
       'utf8'
     );
-    assert.match(cartSrc, /consumer=\{!isStaff\}/);
+    assert.match(cartSrc, /Continue shopping/);
+    assert.match(cartSrc, /isStaff \? \(/);
+    assert.match(cartSrc, /Release holds/);
+    assert.match(blob, /Are you still shopping/);
+    assert.match(blob, /Yes, continue/);
+    assert.match(blob, /\/holds\/extend/);
+    assert.match(blob, /STILL_SHOPPING_LEAD_MINUTES/);
+    assert.doesNotMatch(blob, /iap-open-cart/);
     assert.match(agreementSrc, /if \(consumer\)/);
-    assert.match(blob, /pickStandardRentalTemplate/);
+    assert.match(blob, /signedAgreementTitle/);
+    assert.match(blob, /Signed Service Agreement/);
+    assert.match(blob, /Billed in 24-hour periods/);
+    assert.match(blob, /Friday 3:00 p.m. to/);
     assert.match(blob, /We sent the Standard Rental Agreement/);
     assert.match(blob, /Sending the Standard Rental Agreement/);
     assert.match(agreementSrc, /Send for signature/);
@@ -124,6 +139,10 @@ describe('IAP storefront contract', () => {
     assert.match(blob, /status: 'retired'/);
     assert.match(blob, /Hide from catalog/);
     assert.match(blob, /Change serial/);
+    assert.match(blob, /listCategories/);
+    assert.match(blob, /iap-stock-categories/);
+    assert.match(blob, /Add category/);
+    assert.match(blob, /\/categories/);
     assert.doesNotMatch(blob, /method:\s*['"]DELETE['"]/);
     assert.doesNotMatch(blob, /x:\s*72,\s*y:\s*640/);
     assert.doesNotMatch(blob, /signer_index/);

@@ -11,6 +11,7 @@ import {
   localIsoDate,
   money,
   needsVenueLoadOutNote,
+  rentalHours,
   stockLabel,
   timeOptions,
 } from '../lib/dates';
@@ -110,23 +111,32 @@ export default function CatalogPage({ email, staff, consumer = false, cart, setC
   const pricedEnd = preview?.endsOn || applied.endsOn;
   const billed = billingDays(pricedStart, loadIn, pricedEnd, loadOut);
   const nights = billed ?? 1;
+  const hours = rentalHours(pricedStart, loadIn, pricedEnd, loadOut);
   const periodInvalid = billed == null;
 
   async function applyRange(nextStart: string, nextEnd: string) {
     const start = nextStart;
     const end = nextEnd < nextStart ? nextStart : nextEnd;
-    const nextBilled = billingDays(start, loadIn, end, loadOut);
+    let nextIn = loadIn;
+    let nextOut = loadOut;
+    const current = billingDays(start, nextIn, end, nextOut);
+    const aligned = billingDays(start, nextIn, end, nextIn);
+    if (start < end && current != null && aligned != null && current > aligned) {
+      nextOut = nextIn;
+      setLoadOut(nextIn);
+    }
+    const nextBilled = billingDays(start, nextIn, end, nextOut);
     const changed =
       start !== applied.startsOn ||
       end !== applied.endsOn ||
-      loadIn !== applied.loadIn ||
-      loadOut !== applied.loadOut;
+      nextIn !== applied.loadIn ||
+      nextOut !== applied.loadOut;
     if (changed && cart.length) {
       await releaseCart();
     }
     setStartsOn(start);
     setEndsOn(end);
-    setApplied({ startsOn: start, endsOn: end, loadIn, loadOut });
+    setApplied({ startsOn: start, endsOn: end, loadIn: nextIn, loadOut: nextOut });
     setPreview(null);
     setPickerOpen(false);
     setCalendarSku(null);
@@ -205,7 +215,6 @@ export default function CatalogPage({ email, staff, consumer = false, cart, setC
           loadOut: applied.loadOut,
         },
       ]);
-      window.dispatchEvent(new Event('iap-open-cart'));
       reloadCatalog();
     } catch (err) {
       setError(apiMessage(err));
@@ -295,11 +304,18 @@ export default function CatalogPage({ email, staff, consumer = false, cart, setC
           </label>
           <div className="datebar-action">
             <button className="btn orange" type="button" onClick={() => setPickerOpen(true)}>
-              {periodInvalid ? 'Set times' : `${nights} day${nights === 1 ? '' : 's'}`}
+              {periodInvalid
+                ? 'Set times'
+                : `${nights} day${nights === 1 ? '' : 's'}${
+                    hours != null ? ` · ${hours % 1 === 0 ? hours : hours.toFixed(1)} hr` : ''
+                  }`}
             </button>
           </div>
         </div>
-        <p className="muted datebar-hint">{LOAD_OUT_POLICY}</p>
+        <p className="muted datebar-hint">
+          Billed in 24-hour periods from load-in, not by the calendar boxes. Friday 3:00 p.m. to
+          Saturday 2:00 p.m. is 1 day. {LOAD_OUT_POLICY}
+        </p>
         {needsVenueLoadOutNote(loadOut) ? (
           <p className="banner">
             This load-out is after midnight. Coordinate that time with the venue before you confirm.

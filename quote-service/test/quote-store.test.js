@@ -293,11 +293,13 @@ describe('ensureQuoteTables', () => {
     const { schema } = await ensureQuoteTables(db, TENANT_A);
     assert.equal(schema, SCHEMA_A);
     const sql = calls.join('\n');
-    for (const t of ['customers', 'quotes', 'quote_line_items', 'payments', 'inventory_skus', 'inventory_units', 'inventory_reservations']) {
+    for (const t of ['customers', 'quotes', 'quote_line_items', 'payments', 'inventory_skus', 'inventory_units', 'inventory_categories', 'inventory_reservations']) {
       assert.match(sql, new RegExp(`CREATE TABLE IF NOT EXISTS ${SCHEMA_A}\\.${t}`));
       assert.match(sql, new RegExp(`ALTER TABLE ${SCHEMA_A}\\.${t} FORCE ROW LEVEL SECURITY`));
     }
     assert.match(sql, /UNIQUE \(tenant_id, sku_id, serial_number\)/);
+    assert.match(sql, /inventory_categories_name_uidx/);
+    assert.match(sql, /category = 'Microphones'/);
     assert.match(sql, /held_until TIMESTAMPTZ/);
     assert.match(sql, /calendar_event_id TEXT/);
     assert.match(sql, /customer_signing_token TEXT/);

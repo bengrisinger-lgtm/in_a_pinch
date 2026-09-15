@@ -30,6 +30,7 @@ function makePool() {
   const skus = {};
   const units = {};
   const reservations = {};
+  const categories = {};
 
   function record(sql, params) {
     const compact = String(sql).replace(/\s+/g, ' ').trim();
@@ -56,6 +57,109 @@ function makePool() {
       compact.includes("set_config('app.tenant_id'")
     ) {
       return { rows: [] };
+    }
+
+    if (compact.includes('INSERT INTO') && compact.includes('.inventory_categories')) {
+      const tenantId = params[0];
+      const name = params[1];
+      categories[schema] = categories[schema] || [];
+      if (
+        categories[schema].some(
+          (c) => c.tenant_id === tenantId && String(c.name).toLowerCase() === String(name).toLowerCase()
+        )
+      ) {
+        const err = new Error('duplicate');
+        err.code = '23505';
+        throw err;
+      }
+      const row = {
+        id: randomUUID(),
+        tenant_id: tenantId,
+        name,
+        created_at: '2026-09-14T00:00:00.000Z',
+      };
+      categories[schema].push(row);
+      return { rows: [row] };
+    }
+
+    if (compact.includes('FROM') && compact.includes('.inventory_categories')) {
+      const list = categories[schema] || [];
+      if (compact.includes('lower(name)')) {
+        const hit = list.find(
+          (c) =>
+            c.tenant_id === params[0] && String(c.name).toLowerCase() === String(params[1]).toLowerCase()
+        );
+        return { rows: hit ? [{ name: hit.name }] : [] };
+      }
+      if (compact.includes('WHERE id =')) {
+        const hit = list.find((c) => c.id === params[0] && c.tenant_id === params[1]);
+        return { rows: hit ? [{ id: hit.id, name: hit.name }] : [] };
+      }
+      return {
+        rows: list
+          .filter((c) => c.tenant_id === params[0])
+          .slice()
+          .sort((a, b) => String(a.name).localeCompare(String(b.name))),
+      };
+    }
+
+    if (compact.includes('UPDATE') && compact.includes('.inventory_categories')) {
+      const list = categories[schema] || [];
+      const row = list.find((c) => c.id === params[0] && c.tenant_id === params[1]);
+      if (!row) return { rows: [] };
+      const next = params[2];
+      if (
+        list.some(
+          (c) =>
+            c.id !== row.id &&
+            c.tenant_id === row.tenant_id &&
+            String(c.name).toLowerCase() === String(next).toLowerCase()
+        )
+      ) {
+        const err = new Error('duplicate');
+        err.code = '23505';
+        throw err;
+      }
+      row.name = next;
+      return { rows: [row] };
+    }
+
+    if (
+      compact.includes('UPDATE') &&
+      compact.includes('.inventory_skus') &&
+      compact.includes("category = 'Microphones'") &&
+      compact.includes("category = 'Microphone'")
+    ) {
+      for (const row of skus[schema] || []) {
+        if (row.category === 'Microphone') row.category = 'Microphones';
+      }
+      return { rows: [] };
+    }
+
+    if (
+      compact.includes('UPDATE') &&
+      compact.includes('.inventory_skus') &&
+      compact.includes('WHERE tenant_id') &&
+      compact.includes('AND category =') &&
+      !compact.includes('WHERE id =')
+    ) {
+      const tenantId = params[0];
+      const oldName = params[1];
+      const next = params[2];
+      for (const row of skus[schema] || []) {
+        if (row.tenant_id === tenantId && row.category === oldName) row.category = next;
+      }
+      return { rows: [] };
+    }
+
+    if (compact.includes('SELECT DISTINCT') && compact.includes('inventory_skus')) {
+      const tenantId = params[0];
+      const names = new Set(
+        (skus[schema] || [])
+          .filter((s) => s.tenant_id === tenantId && s.category)
+          .map((s) => s.category)
+      );
+      return { rows: [...names].map((name) => ({ name })) };
     }
 
     if (compact.includes('INSERT INTO') && compact.includes('.inventory_skus')) {
@@ -311,6 +415,27 @@ function makePool() {
       };
     }
 
+    if (compact.includes('UPDATE') && compact.includes('.inventory_reservations') && compact.includes('quote_id IS NULL')) {
+      const ids = Array.isArray(params[1]) ? params[1] : [];
+      const minutes = Number(params[2]) || HOLD_TTL_CART_MINUTES;
+      const list = reservations[schema] || [];
+      const rows = [];
+      for (const id of ids) {
+        const row = list.find(
+          (r) =>
+            r.id === id &&
+            r.tenant_id === params[0] &&
+            r.status === 'held' &&
+            !r.quote_id &&
+            isBlocking(r)
+        );
+        if (!row) continue;
+        row.held_until = new Date(Date.now() + minutes * 60 * 1000).toISOString();
+        rows.push({ id: row.id, held_until: row.held_until });
+      }
+      return { rows, rowCount: rows.length };
+    }
+
     if (compact.includes('UPDATE') && compact.includes('.inventory_reservations') && compact.includes("status = 'confirmed'")) {
       const list = reservations[schema] || [];
       const row = list.find((r) => r.id === params[0] && r.tenant_id === params[1] && isBlocking(r) && r.status === 'held');
@@ -399,6 +524,8 @@ describe('serial inventory HMAC scope', () => {
     const src = fs.readFileSync(path.join(__dirname, '../src/inventory.js'), 'utf8');
     assert.match(src, /now\(\) \+ \(\$9::int \* interval '1 minute'\)/);
     assert.match(src, /r\.held_until > now\(\)/);
+    assert.match(src, /\/holds\/extend/);
+    assert.match(src, /extendCartHolds/);
     assert.match(
       src,
       /r\.status = 'confirmed'/,
@@ -490,6 +617,54 @@ describe('serial inventory HMAC scope', () => {
     assert.equal(availBody.units_total, 1);
     assert.equal(availBody.units_available, 0);
     assert.equal(availBody.band, 'none');
+  });
+
+  it('extends a cart hold and restarts the 15-minute window', async () => {
+    const skuRes = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Extend me', daily_rate: 12 }),
+    });
+    const skuId = (await skuRes.json()).sku.id;
+    const u1 = await fetch(`${urlA}/api/v1/quotes/inventory/skus/${skuId}/units`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serial_number: 'EXT-1' }),
+    });
+    const unitId = (await u1.json()).unit.id;
+    const hold = await fetch(`${urlA}/api/v1/quotes/inventory/holds`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        unit_id: unitId,
+        starts_on: '2026-11-01',
+        ends_on: '2026-11-01',
+        load_in_time: '08:00',
+        load_out_time: '20:00',
+      }),
+    });
+    assert.equal(hold.status, 201);
+    const created = await hold.json();
+    const holdId = created.hold.id;
+
+    const extended = await fetch(`${urlA}/api/v1/quotes/inventory/holds/extend`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hold_ids: [holdId] }),
+    });
+    const extBody = await extended.json();
+    assert.equal(extended.status, 200, JSON.stringify(extBody));
+    assert.equal(extBody.hold_ttl_minutes, 15);
+    assert.equal(extBody.holds.length, 1);
+    assert.equal(extBody.holds[0].id, holdId);
+    assert.ok(extBody.holds[0].held_until);
+
+    const missing = await fetch(`${urlA}/api/v1/quotes/inventory/holds/extend`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hold_ids: ['00000000-0000-0000-0000-000000000099'] }),
+    });
+    assert.equal(missing.status, 409);
   });
 
   it('rejects a load-out between 12:30 a.m. and 7:00 a.m.', async () => {
@@ -734,5 +909,65 @@ describe('retire and rotate serials', () => {
       body: JSON.stringify({ active: false }),
     });
     assert.equal(other.status, 404);
+  });
+
+  it('lists a growing category drop-menu and saves a typed name', async () => {
+    const listed = await fetch(`${urlA}/api/v1/quotes/inventory/categories`);
+    assert.equal(listed.status, 200);
+    const first = await listed.json();
+    assert.ok(first.categories.some((c) => c.name === 'Microphones'));
+    assert.ok(first.categories.some((c) => c.name === 'Speakers'));
+
+    const added = await fetch(`${urlA}/api/v1/quotes/inventory/categories`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Fog machines' }),
+    });
+    assert.equal(added.status, 201);
+    const created = await added.json();
+    assert.equal(created.name, 'Fog machines');
+    assert.ok(created.categories.some((c) => c.name === 'Fog machines'));
+
+    const skuRes = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Look Solutions Unique 2', category: 'fog machines', daily_rate: 40 }),
+    });
+    assert.equal(skuRes.status, 201);
+    const sku = (await skuRes.json()).sku;
+    assert.equal(sku.category, 'Fog machines');
+  });
+
+  it('renames a category on every SKU that used the old label', async () => {
+    const skuRes = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Chauvet DJ Hurricane', category: 'Hazers', daily_rate: 15 }),
+    });
+    const skuId = (await skuRes.json()).sku.id;
+    const listed = await fetch(`${urlA}/api/v1/quotes/inventory/categories`);
+    const hazer = (await listed.json()).categories.find((c) => c.name === 'Hazers');
+    assert.ok(hazer);
+    const renamed = await fetch(`${urlA}/api/v1/quotes/inventory/categories/${hazer.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Haze machines' }),
+    });
+    assert.equal(renamed.status, 200);
+    const skus = await fetch(`${urlA}/api/v1/quotes/inventory/skus`);
+    const row = (await skus.json()).skus.find((s) => s.id === skuId);
+    assert.equal(row.category, 'Haze machines');
+  });
+
+  it('corrects Microphone to Microphones on the next inventory request', async () => {
+    const skuRes = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'SM58 typo', category: 'Microphone', daily_rate: 15 }),
+    });
+    assert.equal((await skuRes.json()).sku.category, 'Microphone');
+    const listed = await fetch(`${urlA}/api/v1/quotes/inventory/skus`);
+    const row = (await listed.json()).skus.find((s) => s.name === 'SM58 typo');
+    assert.equal(row.category, 'Microphones');
   });
 });

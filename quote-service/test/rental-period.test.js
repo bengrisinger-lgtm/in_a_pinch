@@ -10,6 +10,13 @@ import {
 } from '../src/rentalPeriod.js';
 
 describe('rentalPeriod', () => {
+  it('bills Friday 3 p.m. → Saturday 2 p.m. as one day', () => {
+    assert.equal(billingDays('2026-09-18', '15:00', '2026-09-19', '14:00'), 1);
+    assert.equal(billingDays('2026-09-18', '15:00:00', '2026-09-19', '14:00:00'), 1);
+    assert.equal(billingDays('2026-09-18T00:00:00.000Z', '15:00', '2026-09-19 00:00:00', '14:00'), 1);
+    assert.equal(billingDays('2026-09-18', '08:00', '2026-09-19', '20:00'), 2);
+  });
+
   it('bills 8 p.m. 9/14 → 9 a.m. 9/15 as one day', () => {
     assert.equal(billingDays('2026-09-14', '20:00', '2026-09-15', '09:00'), 1);
   });

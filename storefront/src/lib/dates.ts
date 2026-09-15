@@ -93,11 +93,21 @@ function tzOffsetMs(timeZone: string, instant: Date): number {
   return asUtc - instant.getTime();
 }
 
+export function asIsoDate(raw: unknown): string | null {
+  if (raw instanceof Date && Number.isFinite(raw.getTime())) {
+    return raw.toISOString().slice(0, 10);
+  }
+  if (typeof raw !== 'string') return null;
+  const m = raw.trim().match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : null;
+}
+
 export function denverMs(date: string, time: string): number | null {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const iso = asIsoDate(date);
+  if (!iso) return null;
   const hm = parseHm(time);
   if (!hm) return null;
-  const [y, mo, d] = date.split('-').map(Number);
+  const [y, mo, d] = iso.split('-').map(Number);
   const [hh, mm] = hm.split(':').map(Number);
   const asIfUtc = Date.UTC(y, mo - 1, d, hh, mm, 0);
   const offset = tzOffsetMs('America/Denver', new Date(asIfUtc));
@@ -115,6 +125,19 @@ export function billingDays(
   const b = denverMs(endsOn, loadOut);
   if (a == null || b == null || b <= a) return null;
   return Math.max(1, Math.ceil((b - a) / 86400000 - 1e-9));
+}
+
+/** Elapsed hours for the billed window (null if invalid). */
+export function rentalHours(
+  startsOn: string,
+  loadIn: string,
+  endsOn: string,
+  loadOut: string
+): number | null {
+  const a = denverMs(startsOn, loadIn);
+  const b = denverMs(endsOn, loadOut);
+  if (a == null || b == null || b <= a) return null;
+  return (b - a) / 3600000;
 }
 
 export function formatPrettyTime(hm: string): string {

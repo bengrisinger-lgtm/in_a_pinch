@@ -9,10 +9,12 @@ import {
   schemaNameFromTenantId,
   ensureQuoteTables,
   expireStaleHolds,
+  extendCartHolds,
   HOLD_TTL_CART_MINUTES,
 } from './schema.js';
 import { wrapWithTenant, withTenantTransaction } from './pool.js';
 import { actorUserId } from './auth.js';
+import { clipName, listCategories, upsertCategory } from './categories.js';
 import { billingDays, isLoadOutBlocked, occupancyDays, parseHm } from './rentalPeriod.js';
 
 const UUID_RE =
@@ -113,6 +115,80 @@ export function inventoryRoutes(ctx) {
     throw new Error('inventoryRoutes needs staff middleware');
   }
 
+  router.get('/categories', staff, async (req, res) => {
+    try {
+      const { tenantId, schema, db } = await scoped(pool, req);
+      const categories = await listCategories(db, schema, tenantId);
+      res.json({ categories });
+    } catch (err) {
+      req.log?.error?.({ err }, 'category list failed');
+      res.status(500).json({ error: 'Failed to list categories' });
+    }
+  });
+
+  router.post('/categories', staff, async (req, res) => {
+    const name = clipName(req.body?.name);
+    if (!name) {
+      return res.status(400).json({ error: 'name is required' });
+    }
+    try {
+      const { tenantId, schema, db } = await scoped(pool, req);
+      const saved = await upsertCategory(db, schema, tenantId, name);
+      const categories = await listCategories(db, schema, tenantId);
+      res.status(201).json({ name: saved, categories });
+    } catch (err) {
+      req.log?.error?.({ err }, 'category create failed');
+      res.status(500).json({ error: 'Failed to create category' });
+    }
+  });
+
+  router.patch('/categories/:categoryId', staff, async (req, res) => {
+    const categoryId = req.params.categoryId;
+    if (!UUID_RE.test(categoryId)) {
+      return res.status(400).json({ error: 'categoryId must be a UUID' });
+    }
+    const name = clipName(req.body?.name);
+    if (!name) {
+      return res.status(400).json({ error: 'name is required' });
+    }
+    try {
+      const { tenantId, schema, db } = await scoped(pool, req);
+      const current = await db.query(
+        `SELECT id, name FROM ${schema}.inventory_categories
+          WHERE id = $1 AND tenant_id = $2`,
+        [categoryId, tenantId]
+      );
+      if (!current.rows[0]) {
+        return res.status(404).json({ error: 'Category not found' });
+      }
+      const oldName = current.rows[0].name;
+      try {
+        await db.query(
+          `UPDATE ${schema}.inventory_categories
+              SET name = $3
+            WHERE id = $1 AND tenant_id = $2`,
+          [categoryId, tenantId, name]
+        );
+      } catch (err) {
+        if (err?.code === '23505') {
+          return res.status(409).json({ error: 'A category with that name already exists' });
+        }
+        throw err;
+      }
+      await db.query(
+        `UPDATE ${schema}.inventory_skus
+            SET category = $3, updated_at = now()
+          WHERE tenant_id = $1 AND category = $2`,
+        [tenantId, oldName, name]
+      );
+      const categories = await listCategories(db, schema, tenantId);
+      res.json({ name, categories });
+    } catch (err) {
+      req.log?.error?.({ err }, 'category rename failed');
+      res.status(500).json({ error: 'Failed to rename category' });
+    }
+  });
+
   router.post('/skus', staff, async (req, res) => {
     const tenantId = hmacTenantId(req);
     const name = clip(req.body?.name, NAME_MAX);
@@ -125,6 +201,7 @@ export function inventoryRoutes(ctx) {
     }
     try {
       const { schema, db } = await scoped(pool, req);
+      const category = await upsertCategory(db, schema, tenantId, req.body?.category);
       const { rows } = await db.query(
         `INSERT INTO ${schema}.inventory_skus
            (tenant_id, name, category, description, daily_rate)
@@ -133,7 +210,7 @@ export function inventoryRoutes(ctx) {
         [
           tenantId,
           name,
-          clip(req.body?.category, NAME_MAX),
+          category,
           clip(req.body?.description, TEXT_MAX),
           dailyRate,
         ]
@@ -295,7 +372,7 @@ export function inventoryRoutes(ctx) {
       setParts.push(`name = $${params.length}`);
     }
     if (Object.prototype.hasOwnProperty.call(req.body || {}, 'category')) {
-      params.push(clip(req.body.category, NAME_MAX));
+      params.push(clipName(req.body.category));
       setParts.push(`category = $${params.length}`);
     }
     if (Object.prototype.hasOwnProperty.call(req.body || {}, 'daily_rate')) {
@@ -315,6 +392,12 @@ export function inventoryRoutes(ctx) {
     }
     try {
       const { schema, db } = await scoped(pool, req);
+      if (Object.prototype.hasOwnProperty.call(req.body || {}, 'category')) {
+        const idx = setParts.findIndex((part) => part.startsWith('category ='));
+        if (idx >= 0) {
+          params[idx] = await upsertCategory(db, schema, tenantId, req.body.category);
+        }
+      }
       if (req.body?.active === false) {
         const clash = await futureBlocking(db, schema, { tenantId, skuId });
         if (clash) {
@@ -680,6 +763,37 @@ export function inventoryRoutes(ctx) {
       }
       req.log?.error?.({ err }, 'hold create failed');
       res.status(500).json({ error: 'Failed to create hold' });
+    }
+  });
+
+  router.post('/holds/extend', async (req, res) => {
+    const tenantId = hmacTenantId(req);
+    const holdIds = Array.isArray(req.body?.hold_ids)
+      ? [...new Set(req.body.hold_ids.filter((id) => typeof id === 'string' && UUID_RE.test(id)))]
+      : [];
+    if (holdIds.length < 1 || holdIds.length > 50) {
+      return res.status(400).json({ error: 'hold_ids are required (1-50)' });
+    }
+    try {
+      const { schema, db } = await scoped(pool, req);
+      const { ids, rows } = await extendCartHolds(db, schema, tenantId, holdIds, HOLD_TTL_CART_MINUTES);
+      if (rows.length !== ids.length) {
+        return res.status(409).json({
+          error: 'One or more holds expired or are no longer in the cart',
+          holds: rows,
+        });
+      }
+      res.json({
+        holds: rows,
+        hold_ttl_minutes: HOLD_TTL_CART_MINUTES,
+        schema,
+      });
+    } catch (err) {
+      if (err.status === 400) {
+        return res.status(400).json({ error: err.message });
+      }
+      req.log?.error?.({ err }, 'hold extend failed');
+      res.status(500).json({ error: 'Failed to extend holds' });
     }
   });
 

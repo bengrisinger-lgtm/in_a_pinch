@@ -38,6 +38,7 @@ type Props = {
   onRemove: (skuId: string) => void;
   onReleaseAll: () => void;
   onOrderCancelled: () => void;
+  onCheckoutStarted?: () => void;
 };
 
 export default function CartDrawer({
@@ -52,6 +53,7 @@ export default function CartDrawer({
   onRemove,
   onReleaseAll,
   onOrderCancelled,
+  onCheckoutStarted,
 }: Props) {
   const [panel, setPanel] = useState<1 | 2 | 3 | 4>(1);
   const [name, setName] = useState('');
@@ -135,6 +137,7 @@ export default function CartDrawer({
       }
       setSaved(quote);
       setPanel(3);
+      onCheckoutStarted?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save checkout');
     } finally {
@@ -357,7 +360,8 @@ export default function CartDrawer({
                     Qty {line.quantity} · {line.serials.join(', ')}
                   </div>
                   <div className="muted">
-                    {startsOn} {loadIn} → {endsOn} {loadOut} ·{' '}
+                    {formatPrettyDate(startsOn)} {formatPrettyTime(loadIn)} →{' '}
+                    {formatPrettyDate(endsOn)} {formatPrettyTime(loadOut)} ·{' '}
                     {formatUsd(line.dailyRate * line.quantity * nights)}
                   </div>
                 </div>
@@ -377,7 +381,7 @@ export default function CartDrawer({
                 <span>Subtotal</span>
                 <span>{formatUsd(subtotal)}</span>
               </div>
-              {ttl ? (
+              {ttl && isStaff ? (
                 <p className="muted">
                   Cart hold until {new Date(ttl).toLocaleString()} (15 minutes before they
                   sign). After send: 2 hours. After both sign, unpaid: 24 hours.
@@ -385,18 +389,26 @@ export default function CartDrawer({
               ) : null}
             </div>
             <div className="actions">
-              <button
-                className="back"
-                type="button"
-                disabled={cart.length === 0}
-                onClick={onReleaseAll}
-              >
-                Release holds
+              <button className="back" type="button" onClick={onClose}>
+                Continue shopping
               </button>
               <button type="button" disabled={cart.length === 0} onClick={() => setPanel(2)}>
                 Continue
               </button>
             </div>
+            {isStaff ? (
+              <div className="actions">
+                <button
+                  className="back"
+                  type="button"
+                  disabled={cart.length === 0}
+                  onClick={onReleaseAll}
+                >
+                  Release holds
+                </button>
+                <span />
+              </div>
+            ) : null}
           </>
         ) : null}
 

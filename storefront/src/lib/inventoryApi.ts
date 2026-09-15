@@ -73,6 +73,30 @@ async function invFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
   return res.json() as Promise<T>;
 }
 
+export type InventoryCategory = {
+  id: string;
+  name: string;
+  created_at?: string;
+};
+
+export function listCategories() {
+  return invFetch<{ categories: InventoryCategory[] }>('/categories');
+}
+
+export function createCategory(name: string) {
+  return invFetch<{ name: string; categories: InventoryCategory[] }>('/categories', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export function renameCategory(categoryId: string, name: string) {
+  return invFetch<{ name: string; categories: InventoryCategory[] }>(`/categories/${categoryId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ name }),
+  });
+}
+
 export function listSkus(startsOn?: string, endsOn?: string) {
   const q =
     startsOn && endsOn
@@ -157,4 +181,14 @@ export function cancelHold(holdId: string) {
     method: 'POST',
     body: JSON.stringify({}),
   });
+}
+
+export function extendHolds(holdIds: string[]) {
+  return invFetch<{ holds: { id: string; held_until: string }[]; hold_ttl_minutes: number }>(
+    '/holds/extend',
+    {
+      method: 'POST',
+      body: JSON.stringify({ hold_ids: holdIds }),
+    }
+  );
 }

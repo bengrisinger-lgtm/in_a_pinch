@@ -108,8 +108,8 @@ export default function CalendarModal({
         </div>
         <h2 id="cal-title">{sku ? sku.name : 'Choose dates'}</h2>
         <p className="muted">
-          Click load-in day, then load-out day. Charge is by the 24-hour clock (8 p.m. to 9 a.m. is
-          one day). {formatPrettyDate(draftStart)} {formatPrettyTime(loadIn)}
+          Click load-in day, then load-out day. Charge is by the 24-hour clock — Friday 3:00 p.m.
+          to Saturday 2:00 p.m. is one day. {formatPrettyDate(draftStart)} {formatPrettyTime(loadIn)}
           {draftEnd ? ` → ${formatPrettyDate(draftEnd)} ${formatPrettyTime(loadOut)}` : ''}
           {' · '}
           {nights} day{nights === 1 ? '' : 's'}.

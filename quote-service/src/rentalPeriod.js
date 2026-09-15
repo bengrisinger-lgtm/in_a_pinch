@@ -82,12 +82,22 @@ function tzOffsetMs(timeZone, instant) {
   return asUtc - instant.getTime();
 }
 
+export function asIsoDate(raw) {
+  if (raw instanceof Date && Number.isFinite(raw.getTime())) {
+    return raw.toISOString().slice(0, 10);
+  }
+  if (typeof raw !== 'string') return null;
+  const m = raw.trim().match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : null;
+}
+
 /** UTC millis for a Denver local date + HH:mm. */
 export function denverMs(date, time) {
-  if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const iso = asIsoDate(date);
+  if (!iso) return null;
   const hm = parseHm(time);
   if (!hm) return null;
-  const [y, mo, d] = date.split('-').map(Number);
+  const [y, mo, d] = iso.split('-').map(Number);
   const [hh, mm] = hm.split(':').map(Number);
   const asIfUtc = Date.UTC(y, mo - 1, d, hh, mm, 0);
   const offset = tzOffsetMs(IAP_TIME_ZONE, new Date(asIfUtc));

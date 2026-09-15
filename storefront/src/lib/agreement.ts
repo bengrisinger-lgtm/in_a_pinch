@@ -7,6 +7,7 @@ import {
 } from './templateRoles.js';
 import { asTemplateList, isGenuineEmptyTemplateList, templateListShapeHint } from './templateList.js';
 import { COMPANY_SIGNER } from './companySigner.js';
+import { signedAgreementTitle } from './signedAgreementTitle.js';
 
 const READY = new Set(['materialized']);
 
@@ -141,7 +142,7 @@ export async function sendServiceAgreement(input: {
   const created = await client.signing.applyTemplate(template.id, {
     document_id: documentId,
     document_hash: await hashDocumentId(documentId),
-    subject: 'Service agreement',
+    subject: signedAgreementTitle(input.customerName),
     message: input.paymentUrl
       ? `Please review and sign. After you sign, you will continue to payment. If you close that page, pay at ${input.paymentUrl}`
       : 'Please review and sign the Service Agreement.',
