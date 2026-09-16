@@ -81,7 +81,9 @@ Prefix `/api/v1/quotes`:
 
 Inventory (prefix `/api/v1/quotes/inventory`):
 
-- `POST /skus` `GET /skus`
+- `POST /skus` `GET /skus` — optional `description`, `image_url` (https or `/catalog-media/{skuId}.ext`)
+- `PATCH /skus/:skuId` — `description`, `image_url`, name, category, rate, active
+- `POST /skus/:skuId/catalog-image` — staff JSON `{ content_type, data_base64 }` (max 2MB); writes to `CATALOG_MEDIA_BUCKETS` and sets `image_url`
 - `POST /skus/:skuId/units` `GET /skus/:skuId/units` (serial numbers)
 - `GET /availability?sku_id=&starts_on=&ends_on=` — N of M plus per-serial free/busy
 - `GET /skus?starts_on=&ends_on=` — catalog list with `units_available` + `band` for those dates

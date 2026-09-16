@@ -22,6 +22,14 @@ import {
   upsertCategory,
 } from './categories.js';
 import { billingDays, isLoadOutBlocked, occupancyDays, parseHm } from './rentalPeriod.js';
+import {
+  normalizeStoredImageUrl,
+  parseCatalogImageUpload,
+  putCatalogImageObjects,
+} from './catalogImage.js';
+
+const SKU_COLUMNS =
+  'id, name, category, description, image_url, daily_rate, active, created_at, updated_at';
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -209,9 +217,6 @@ export function inventoryRoutes(ctx) {
       if (err.status === 404) {
         return res.status(404).json({ error: err.message });
       }
-      if (err.status === 409) {
-        return res.status(409).json(err.body || { error: err.message });
-      }
       if (err.status === 400) {
         return res.status(400).json({ error: err.message });
       }
@@ -233,16 +238,21 @@ export function inventoryRoutes(ctx) {
     try {
       const { schema, db } = await scoped(pool, req);
       const category = await requireListedCategory(db, schema, tenantId, req.body?.category);
+      let imageUrl = null;
+      if (Object.prototype.hasOwnProperty.call(req.body || {}, 'image_url')) {
+        imageUrl = normalizeStoredImageUrl(req.body.image_url);
+      }
       const { rows } = await db.query(
         `INSERT INTO ${schema}.inventory_skus
-           (tenant_id, name, category, description, daily_rate)
-         VALUES ($1, $2, $3, $4, $5)
-         RETURNING id, name, category, description, daily_rate, active, created_at`,
+           (tenant_id, name, category, description, image_url, daily_rate)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id, name, category, description, image_url, daily_rate, active, created_at`,
         [
           tenantId,
           name,
           category,
           clip(req.body?.description, TEXT_MAX),
+          imageUrl,
           dailyRate,
         ]
       );
@@ -278,7 +288,7 @@ export function inventoryRoutes(ctx) {
       const { tenantId, schema, db } = await scoped(pool, req);
       await expireStaleHolds(db, schema, tenantId);
       const { rows } = await db.query(
-        `SELECT s.id, s.name, s.category, s.description, s.daily_rate, s.active, s.created_at,
+        `SELECT s.id, s.name, s.category, s.description, s.image_url, s.daily_rate, s.active, s.created_at,
                 (SELECT count(*)::int FROM ${schema}.inventory_units u
                   WHERE u.sku_id = s.id AND u.status = 'active') AS units_total
            FROM ${schema}.inventory_skus s
@@ -429,6 +439,14 @@ export function inventoryRoutes(ctx) {
       params.push(req.body.active);
       setParts.push(`active = $${params.length}`);
     }
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'description')) {
+      params.push(clip(req.body.description, TEXT_MAX));
+      setParts.push(`description = $${params.length}`);
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'image_url')) {
+      params.push(normalizeStoredImageUrl(req.body.image_url));
+      setParts.push(`image_url = $${params.length}`);
+    }
     if (setParts.length === 0) {
       return res.status(400).json({ error: 'no fields to update' });
     }
@@ -453,7 +471,7 @@ export function inventoryRoutes(ctx) {
         `UPDATE ${schema}.inventory_skus
             SET ${setParts.join(', ')}, updated_at = now()
           WHERE id = $${params.length - 1} AND tenant_id = $${params.length}
-          RETURNING id, name, category, description, daily_rate, active, created_at, updated_at`,
+          RETURNING ${SKU_COLUMNS}`,
         params
       );
       if (!rows[0]) {
@@ -466,6 +484,44 @@ export function inventoryRoutes(ctx) {
       }
       req.log?.error?.({ err }, 'sku patch failed');
       res.status(500).json({ error: 'Failed to update sku' });
+    }
+  });
+
+  router.post('/skus/:skuId/catalog-image', staff, async (req, res) => {
+    const tenantId = hmacTenantId(req);
+    const skuId = req.params.skuId;
+    if (!UUID_RE.test(skuId)) {
+      return res.status(400).json({ error: 'skuId must be a UUID' });
+    }
+    try {
+      const { schema, db } = await scoped(pool, req);
+      const sku = await db.query(
+        `SELECT id FROM ${schema}.inventory_skus WHERE id = $1 AND tenant_id = $2`,
+        [skuId, tenantId]
+      );
+      if (!sku.rows[0]) {
+        return res.status(404).json({ error: 'SKU not found' });
+      }
+      const upload = parseCatalogImageUpload(req.body, skuId);
+      const imageUrl = await putCatalogImageObjects({
+        path: upload.path,
+        buffer: upload.buffer,
+        contentType: upload.contentType,
+      });
+      const { rows } = await db.query(
+        `UPDATE ${schema}.inventory_skus
+            SET image_url = $1, updated_at = now()
+          WHERE id = $2 AND tenant_id = $3
+          RETURNING ${SKU_COLUMNS}`,
+        [imageUrl, skuId, tenantId]
+      );
+      res.json({ sku: rows[0], schema });
+    } catch (err) {
+      if (err.status === 400 || err.status === 503) {
+        return res.status(err.status).json({ error: err.message });
+      }
+      req.log?.error?.({ err }, 'catalog image upload failed');
+      res.status(500).json({ error: 'Failed to upload catalog image' });
     }
   });
 

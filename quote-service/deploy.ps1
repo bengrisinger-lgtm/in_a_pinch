@@ -212,6 +212,8 @@ try {
 $envYamlPath = Join-Path $staging "env.yaml"
 $consoleUrlLine = if ($CONSOLE_SERVICE_URL) { "CONSOLE_SERVICE_URL: `"$CONSOLE_SERVICE_URL`"" } else { "" }
 $integrationsUrlLine = if ($INTEGRATIONS_SERVICE_URL) { "INTEGRATIONS_SERVICE_URL: `"$INTEGRATIONS_SERVICE_URL`"" } else { "" }
+$catalogBuckets = if ($env:CATALOG_MEDIA_BUCKETS) { $env:CATALOG_MEDIA_BUCKETS.Trim() } else { '' }
+$catalogBucketsLine = if ($catalogBuckets) { "CATALOG_MEDIA_BUCKETS: `"$catalogBuckets`"" } else { "" }
 Write-Utf8NoBom $envYamlPath @"
 DB_USER: "$SQL_USER"
 DB_NAME: "$SQL_DATABASE"
@@ -221,6 +223,7 @@ TENANT_ID: "$TenantId"
 CALENDAR_TIMEZONE: "America/Denver"
 $consoleUrlLine
 $integrationsUrlLine
+$catalogBucketsLine
 "@
 
 if ($CONSOLE_SERVICE_URL) {

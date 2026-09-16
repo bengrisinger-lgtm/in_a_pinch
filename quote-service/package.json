@@ -13,6 +13,7 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@google-cloud/storage": "^7.14.0",
     "@securedbackend/sdk": "file:../../../symlfy-baas/syml-platform/client-sdk",
     "cors": "^2.8.5",
     "express": "^4.19.2",

@@ -114,6 +114,7 @@ export function attachEnvelope(
 export type StaffQuote = CheckoutQuote & {
   customer_name?: string;
   customer_email?: string;
+  customer_phone?: string | null;
   customer_signing_token?: string | null;
   staff_signing_token?: string | null;
   held_until?: string | null;

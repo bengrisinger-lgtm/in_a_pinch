@@ -5,6 +5,7 @@ export type Sku = {
   name: string;
   category: string | null;
   description: string | null;
+  image_url?: string | null;
   daily_rate: number | string;
   active: boolean;
   units_total: number;
@@ -116,6 +117,7 @@ export function createSku(input: {
   name: string;
   category: string;
   description?: string;
+  image_url?: string | null;
   daily_rate: number;
 }) {
   return invFetch<{ sku: Sku }>('/skus', {
@@ -137,7 +139,14 @@ export function createUnit(skuId: string, input: { serial_number: string; nickna
 
 export function patchSku(
   skuId: string,
-  input: { active?: boolean; name?: string; category?: string | null; daily_rate?: number }
+  input: {
+    active?: boolean;
+    name?: string;
+    category?: string | null;
+    daily_rate?: number;
+    description?: string | null;
+    image_url?: string | null;
+  }
 ) {
   return invFetch<{ sku: Sku }>(`/skus/${skuId}`, {
     method: 'PATCH',
@@ -167,6 +176,21 @@ export function loadCalendar(skuId: string, year: number, month: number) {
     hold_ttl_hours: number;
     days: CalendarDay[];
   }>(`/calendar${q}`);
+}
+
+export async function uploadSkuCatalogImage(skuId: string, file: File) {
+  const buf = await file.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  const chunk = 8192;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  const data_base64 = btoa(binary);
+  return invFetch<{ sku: Sku }>(`/skus/${skuId}/catalog-image`, {
+    method: 'POST',
+    body: JSON.stringify({ content_type: file.type, data_base64 }),
+  });
 }
 
 export function createHolds(input: {

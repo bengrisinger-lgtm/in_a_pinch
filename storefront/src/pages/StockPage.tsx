@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react';
+import { catalogImageSrc } from '../lib/catalogImage';
 import {
   createCategory,
   deleteCategory,
@@ -10,6 +11,7 @@ import {
   listUnits,
   patchSku,
   patchUnit,
+  uploadSkuCatalogImage,
   type InventoryCategory,
   type InventoryUnit,
   type Sku,
@@ -26,10 +28,13 @@ export default function StockPage({ email }: Props) {
   const [category, setCategory] = useState('');
   const [newCategory, setNewCategory] = useState('');
   const [rate, setRate] = useState('25');
+  const [newDescription, setNewDescription] = useState('');
+  const [descDraft, setDescDraft] = useState<Record<string, string>>({});
   const [serials, setSerials] = useState<Record<string, string>>({});
   const [editing, setEditing] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
-  const [showRetired, setShowRetired] = useState<Record<string, boolean>>({});
+  const [deleteCategoryTarget, setDeleteCategoryTarget] = useState<InventoryCategory | null>(null);
+  const [deleteCategoryConfirm, setDeleteCategoryConfirm] = useState('');
 
   async function refresh() {
     const [data, cats] = await Promise.all([listSkus(), listCategories()]);
@@ -71,10 +76,12 @@ export default function StockPage({ email }: Props) {
       await createSku({
         name: name.trim(),
         category: category.trim(),
+        description: newDescription.trim() || undefined,
         daily_rate: Number(rate),
       });
       setName('');
       setCategory('');
+      setNewDescription('');
       await refresh();
     } catch (err) {
       setError(apiMessage(err));
@@ -117,36 +124,43 @@ export default function StockPage({ email }: Props) {
     }
   }
 
-  async function onDeleteCategory(cat: InventoryCategory) {
-    if (!window.confirm(`Remove “${cat.name}” from the category list?`)) return;
+  function openDeleteCategory(cat: InventoryCategory) {
+    setDeleteCategoryConfirm('');
+    setDeleteCategoryTarget(cat);
+  }
+
+  function closeDeleteCategory() {
+    setDeleteCategoryTarget(null);
+    setDeleteCategoryConfirm('');
+  }
+
+  async function confirmDeleteCategory() {
+    const cat = deleteCategoryTarget;
+    if (!cat || deleteCategoryConfirm !== 'DELETE') return;
     setBusy(true);
     setError(null);
     try {
-      let data: { categories: InventoryCategory[] };
-      try {
-        data = await deleteCategory(cat.id);
-      } catch (err) {
-        if (err instanceof InventoryApiError && err.status === 409) {
-          const others = categories.filter((c) => c.id !== cat.id);
-          const fallback =
-            others.find((c) => c.name === 'Microphones')?.name || others[0]?.name || '';
-          const reassign = window
-            .prompt(`${err.message}\n\nReassign those SKUs to:`, fallback)
-            ?.trim();
-          if (!reassign) return;
-          data = await deleteCategory(cat.id, reassign);
-        } else {
-          throw err;
-        }
-      }
+      const data = await deleteCategory(cat.id);
       setCategories(data.categories);
       if (category === cat.name) setCategory('');
+      closeDeleteCategory();
       await refresh();
     } catch (err) {
       setError(apiMessage(err));
     } finally {
       setBusy(false);
     }
+  }
+
+  async function removeCatalogPhoto(sku: Sku) {
+    if (
+      !window.confirm(
+        `Remove the catalog photo for “${sku.name}”? The shop will show the category placeholder until you upload a new image.`
+      )
+    ) {
+      return;
+    }
+    await run(() => patchSku(sku.id, { image_url: null }).then(() => undefined));
   }
 
   async function run(fn: () => Promise<void>) {
@@ -184,8 +198,9 @@ export default function StockPage({ email }: Props) {
         <h3>Categories</h3>
         <p className="muted">
           Add names here first, then pick from the list when you add a SKU — free typing is not
-          allowed. Remove a label with × (reassign SKUs if any still use it). The shop only
-          shows a filter after a SKU uses that name.
+          allowed. Remove a label with × — type DELETE to confirm. SKUs that used that label
+          become uncategorized (pick a new category on each SKU). The shop only shows a filter
+          after a SKU uses that name.
         </p>
         <div className="category-chips">
           {categories.map((cat) => (
@@ -196,7 +211,7 @@ export default function StockPage({ email }: Props) {
                 className="category-chip-remove"
                 disabled={busy}
                 aria-label={`Remove category ${cat.name}`}
-                onClick={() => void onDeleteCategory(cat)}
+                onClick={() => openDeleteCategory(cat)}
               >
                 ×
               </button>
@@ -259,6 +274,16 @@ export default function StockPage({ email }: Props) {
             required
           />
         </div>
+        <div className="stock-form-wide">
+          <label htmlFor="skuDesc">Catalog description</label>
+          <textarea
+            id="skuDesc"
+            className="stock-desc"
+            value={newDescription}
+            onChange={(e) => setNewDescription(e.target.value)}
+            placeholder="What renters should know about this item (optional)."
+          />
+        </div>
         <div style={{ display: 'flex', alignItems: 'end' }}>
           <button className="btn orange" type="submit" disabled={busy}>
             Add SKU
@@ -300,13 +325,71 @@ export default function StockPage({ email }: Props) {
               {Number(sku.daily_rate).toFixed(2)} / day
               {sku.active === false ? ' · Hidden from catalog' : ''}
             </p>
+            <div className="stock-catalog-media">
+              {catalogImageSrc(sku.image_url) ? (
+                <img
+                  className="stock-catalog-thumb"
+                  src={catalogImageSrc(sku.image_url)!}
+                  alt=""
+                />
+              ) : null}
+              <div style={{ flex: '1 1 200px' }}>
+                <label htmlFor={`sku-desc-${sku.id}`}>Catalog description</label>
+                <textarea
+                  id={`sku-desc-${sku.id}`}
+                  className="stock-desc"
+                  disabled={busy}
+                  value={descDraft[sku.id] ?? sku.description ?? ''}
+                  onChange={(e) =>
+                    setDescDraft((prev) => ({ ...prev, [sku.id]: e.target.value }))
+                  }
+                  onBlur={() => {
+                    const next = (descDraft[sku.id] ?? sku.description ?? '').trim();
+                    const prev = (sku.description ?? '').trim();
+                    if (next === prev) return;
+                    void run(() =>
+                      patchSku(sku.id, { description: next || null }).then(() => undefined)
+                    );
+                  }}
+                  placeholder="Shown on the rental catalog."
+                />
+                <div className="stock-photo-actions">
+                  <label className="btn secondary">
+                    {sku.image_url ? 'Replace photo' : 'Upload catalog photo'}
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      hidden
+                      disabled={busy}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = '';
+                        if (!file) return;
+                        void run(() => uploadSkuCatalogImage(sku.id, file).then(() => undefined));
+                      }}
+                    />
+                  </label>
+                  {sku.image_url ? (
+                    <button
+                      type="button"
+                      className="secondary"
+                      disabled={busy}
+                      onClick={() => void removeCatalogPhoto(sku)}
+                    >
+                      Remove photo
+                    </button>
+                  ) : (
+                    <span className="muted stock-photo-hint">
+                      Remove photo appears after you upload one.
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
             {(units[sku.id] || [])
-              .filter((unit) => unit.status === 'active' || showRetired[sku.id])
+              .filter((unit) => unit.status === 'active')
               .map((unit) => (
-              <div
-                className={`unit-row${unit.status !== 'active' ? ' retired' : ''}`}
-                key={unit.id}
-              >
+              <div className="unit-row" key={unit.id}>
                 <div className="unit-main">
                   {editing[unit.id] != null ? (
                     <input
@@ -379,53 +462,26 @@ export default function StockPage({ email }: Props) {
                       Change serial
                     </button>
                   )}
-                  {unit.status === 'active' ? (
-                    <button
-                      type="button"
-                      className="secondary"
-                      disabled={busy}
-                      onClick={() => {
-                        if (
-                          !window.confirm(
-                            `Retire ${unit.serial_number}? It stays on past bookings and leaves the calendar. You can restore it later.`
-                          )
-                        ) {
-                          return;
-                        }
-                        void run(() => patchUnit(sku.id, unit.id, { status: 'retired' }).then(() => undefined));
-                      }}
-                    >
-                      Retire
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      className="secondary"
-                      disabled={busy}
-                      onClick={() =>
-                        run(() => patchUnit(sku.id, unit.id, { status: 'active' }).then(() => undefined))
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={busy}
+                    onClick={() => {
+                      if (
+                        !window.confirm(
+                          `Retire ${unit.serial_number}? It stays on past bookings and leaves the calendar. Retired serials are hidden here until we add Find retired items.`
+                        )
+                      ) {
+                        return;
                       }
-                    >
-                      Restore
-                    </button>
-                  )}
+                      void run(() => patchUnit(sku.id, unit.id, { status: 'retired' }).then(() => undefined));
+                    }}
+                  >
+                    Retire
+                  </button>
                 </div>
               </div>
             ))}
-            {(() => {
-              const retired = (units[sku.id] || []).filter((u) => u.status !== 'active');
-              if (!retired.length || showRetired[sku.id]) return null;
-              return (
-                <button
-                  type="button"
-                  className="linkish retired-toggle"
-                  disabled={busy}
-                  onClick={() => setShowRetired((prev) => ({ ...prev, [sku.id]: true }))}
-                >
-                  Show {retired.length} retired serial{retired.length === 1 ? '' : 's'}
-                </button>
-              );
-            })()}
             <div className="addrow stock-serial" style={{ marginTop: 12 }}>
               <input
                 value={serials[sku.id] || ''}
@@ -470,6 +526,47 @@ export default function StockPage({ email }: Props) {
         </article>
       ))}
       {skus.length === 0 ? <p className="muted">No SKUs yet.</p> : null}
+
+      {deleteCategoryTarget ? (
+        <div className="confirm-backdrop" role="presentation" onClick={closeDeleteCategory}>
+          <div
+            className="confirm-panel"
+            role="dialog"
+            aria-labelledby="delete-cat-title"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="delete-cat-title">Delete category “{deleteCategoryTarget.name}”?</h3>
+            <p className="muted">
+              SKUs using this label will become uncategorized. You can pick a new category on each
+              SKU in this list. This cannot be undone from here — you would add the name again under
+              Categories.
+            </p>
+            <label htmlFor="delete-cat-confirm">Type DELETE to confirm</label>
+            <input
+              id="delete-cat-confirm"
+              className="confirm-input"
+              value={deleteCategoryConfirm}
+              onChange={(e) => setDeleteCategoryConfirm(e.target.value)}
+              autoComplete="off"
+              autoFocus
+            />
+            <div className="confirm-actions">
+              <button type="button" className="secondary" disabled={busy} onClick={closeDeleteCategory}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn orange"
+                disabled={busy || deleteCategoryConfirm !== 'DELETE'}
+                onClick={() => void confirmDeleteCategory()}
+              >
+                Delete category
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

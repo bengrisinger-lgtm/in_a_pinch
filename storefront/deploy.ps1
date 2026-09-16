@@ -99,7 +99,8 @@ app-resolver sees status=active (up to 60s cache).
 }
 
 Write-Host "Uploading $DistDir → $BucketUri" -ForegroundColor Cyan
-gcloud storage rsync --recursive --delete-unmatched-destination-objects $DistDir $BucketUri
+# quote-service staff uploads live at catalog-media/ on this bucket (hub + apex).
+gcloud storage rsync --recursive --delete-unmatched-destination-objects $DistDir $BucketUri --exclude="^catalog-media/.*"
 if ($LASTEXITCODE -ne 0) { throw "gcloud storage rsync failed" }
 
 $ConsoleOverlay = Join-Path $ScriptRoot "console-dist"

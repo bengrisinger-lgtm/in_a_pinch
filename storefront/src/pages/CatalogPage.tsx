@@ -14,6 +14,7 @@ import {
   stockLabel,
   timeOptions,
 } from '../lib/dates';
+import { catalogImageSrc } from '../lib/catalogImage';
 import {
   cancelHold,
   createHolds,
@@ -79,7 +80,9 @@ export default function CatalogPage({ email, staff, consumer = false, cart, setC
       try {
         const data = await listSkus(applied.startsOn, applied.endsOn);
         if (cancelled) return;
-        const next = (Array.isArray(data.skus) ? data.skus : []).filter((s) => s.active !== false);
+        const next = (Array.isArray(data.skus) ? data.skus : []).filter(
+          (s) => s.active !== false && (s.units_total || 0) > 0
+        );
         // Hold cancel can race a catalog GET. Keep the last good list instead of
         // flashing "No SKUs yet" when the reload comes back empty or aborted.
         setSkus((prev) => (next.length === 0 && prev.length > 0 ? prev : next));
@@ -348,12 +351,18 @@ export default function CatalogPage({ email, staff, consumer = false, cart, setC
             const maxQty = Math.max(1, available);
             const rate = money(sku.daily_rate);
             const inCart = cart.some((l) => l.skuId === sku.id);
+            const photo = catalogImageSrc(sku.image_url);
             return (
               <article key={sku.id} className="product">
-                <div className="product-art">{sku.category || 'Gear'}</div>
+                {photo ? (
+                  <img className="product-photo" src={photo} alt="" />
+                ) : (
+                  <div className="product-art">{sku.category || 'Gear'}</div>
+                )}
                 <div className="product-body">
                   <div className="tag">{sku.category || 'Uncategorized'}</div>
                   <h3>{sku.name}</h3>
+                  {sku.description ? <p className="product-desc">{sku.description}</p> : null}
                   <span className={`stock ${band}`}>{stockLabel(sku.units_available, total, band)}</span>
                   <div className="price">
                     {formatUsd(rate)} / day · {formatUsd(rate * nights)} for {nights} day

@@ -157,6 +157,20 @@ function makePool() {
     if (
       compact.includes('UPDATE') &&
       compact.includes('.inventory_skus') &&
+      compact.includes('SET category = NULL') &&
+      compact.includes('WHERE tenant_id')
+    ) {
+      const tenantId = params[0];
+      const oldName = params[1];
+      for (const row of skus[schema] || []) {
+        if (row.tenant_id === tenantId && row.category === oldName) row.category = null;
+      }
+      return { rows: [] };
+    }
+
+    if (
+      compact.includes('UPDATE') &&
+      compact.includes('.inventory_skus') &&
       compact.includes('WHERE tenant_id') &&
       compact.includes('AND category =') &&
       !compact.includes('WHERE id =')
@@ -186,7 +200,8 @@ function makePool() {
         name: params[1],
         category: params[2],
         description: params[3],
-        daily_rate: params[4],
+        image_url: params[4],
+        daily_rate: params[5],
         active: true,
         created_at: '2026-09-11T00:00:00.000Z',
         tenant_id: params[0],
@@ -394,6 +409,8 @@ function makePool() {
       let i = 0;
       if (compact.includes('name =')) row.name = params[i++];
       if (compact.includes('category =')) row.category = params[i++];
+      if (compact.includes('description =')) row.description = params[i++];
+      if (compact.includes('image_url =')) row.image_url = params[i++];
       if (compact.includes('daily_rate =')) row.daily_rate = params[i++];
       if (compact.includes('active =')) row.active = params[i++];
       row.updated_at = '2026-09-12T00:00:00.000Z';
@@ -945,6 +962,31 @@ describe('retire and rotate serials', () => {
     assert.equal(retired.status, 409);
   });
 
+  it('stores catalog description and image_url on patch', async () => {
+    const skuRes = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Described', category: 'Microphones', daily_rate: 12 }),
+    });
+    const skuId = (await skuRes.json()).sku.id;
+    const patched = await fetch(`${urlA}/api/v1/quotes/inventory/skus/${skuId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        description: 'Wireless handheld with clip.',
+        image_url: `/catalog-media/${skuId}.jpg`,
+      }),
+    });
+    assert.equal(patched.status, 200);
+    const body = await patched.json();
+    assert.equal(body.sku.description, 'Wireless handheld with clip.');
+    assert.equal(body.sku.image_url, `/catalog-media/${skuId}.jpg`);
+    const listed = await fetch(`${urlA}/api/v1/quotes/inventory/skus`);
+    const row = (await listed.json()).skus.find((s) => s.id === skuId);
+    assert.equal(row.description, 'Wireless handheld with clip.');
+    assert.equal(row.image_url, `/catalog-media/${skuId}.jpg`);
+  });
+
   it('hides a SKU from the catalog without deleting rows', async () => {
     const skuRes = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
       method: 'POST',
@@ -1062,27 +1104,43 @@ describe('retire and rotate serials', () => {
     assert.equal(skuRes.status, 201);
     const skuId = (await skuRes.json()).sku.id;
 
-    const blocked = await fetch(`${urlA}/api/v1/quotes/inventory/categories/${staging.id}`, {
+    const uncategorized = await fetch(`${urlA}/api/v1/quotes/inventory/categories/${staging.id}`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
     });
-    assert.equal(blocked.status, 409);
+    assert.equal(uncategorized.status, 200);
+    const afterClear = await fetch(`${urlA}/api/v1/quotes/inventory/skus`);
+    const cleared = (await afterClear.json()).skus.find((s) => s.id === skuId);
+    assert.equal(cleared.category, null);
 
-    const removed = await fetch(`${urlA}/api/v1/quotes/inventory/categories/${staging.id}`, {
+    const added2 = await fetch(`${urlA}/api/v1/quotes/inventory/categories`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Staging' }),
+    });
+    const staging2 = (await added2.json()).categories.find((c) => c.name === 'Staging');
+    await fetch(`${urlA}/api/v1/quotes/inventory/skus/${skuId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category: 'Staging' }),
+    });
+
+    const removed = await fetch(`${urlA}/api/v1/quotes/inventory/categories/${staging2.id}`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ reassign_to: 'Microphones' }),
     });
     const removedText = await removed.text();
     assert.equal(removed.status, 200, removedText);
-    const delCall = pool.calls.find((c) => c.sql.includes('DELETE') && c.sql.includes('inventory_categories'));
-    assert.ok(delCall);
-    assert.equal(delCall.params[0], staging.id);
+    const delCalls = pool.calls.filter(
+      (c) => c.sql.includes('DELETE') && c.sql.includes('inventory_categories')
+    );
+    assert.ok(delCalls.some((c) => c.params[0] === staging2.id));
     const bucket = pool.categories[SCHEMA_A] || [];
-    assert.ok(!bucket.some((c) => c.id === staging.id), `mock still has: ${bucket.map((c) => c.name).join(', ')}`);
+    assert.ok(!bucket.some((c) => c.id === staging2.id), `mock still has: ${bucket.map((c) => c.name).join(', ')}`);
     const cats = JSON.parse(removedText).categories;
-    assert.ok(!cats.some((c) => c.id === staging.id));
+    assert.ok(!cats.some((c) => c.id === staging2.id));
     const skus = await fetch(`${urlA}/api/v1/quotes/inventory/skus`);
     const row = (await skus.json()).skus.find((s) => s.id === skuId);
     assert.equal(row.category, 'Microphones');

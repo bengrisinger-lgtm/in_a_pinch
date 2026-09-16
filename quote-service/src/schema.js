@@ -112,6 +112,7 @@ const TABLES = [
       name TEXT NOT NULL,
       category TEXT,
       description TEXT,
+      image_url TEXT,
       daily_rate NUMERIC NOT NULL DEFAULT 0,
       active BOOLEAN NOT NULL DEFAULT true,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -281,6 +282,9 @@ export async function ensureQuoteTables(db, tenantId) {
         ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`
   );
   await db.query(
+    `ALTER TABLE ${schema}.inventory_skus ADD COLUMN IF NOT EXISTS image_url TEXT`
+  );
+  await db.query(
     `UPDATE ${schema}.inventory_skus
         SET category = 'Microphones', updated_at = now()
       WHERE category = 'Microphone'`
@@ -311,6 +315,10 @@ export async function ensureQuoteTables(db, tenantId) {
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS payment_link_url TEXT`);
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS payment_link_id TEXT`);
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS square_order_id TEXT`);
+  await db.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS customers_tenant_email_uidx
+        ON ${schema}.customers (tenant_id, lower(email))`
+  );
   return { schema, tables: TABLES.map((t) => t.name) };
 }
 

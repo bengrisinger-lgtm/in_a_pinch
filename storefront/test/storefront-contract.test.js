@@ -139,11 +139,15 @@ describe('IAP storefront contract', () => {
     assert.match(blob, /patchUnit/);
     assert.match(blob, /status: 'retired'/);
     assert.match(blob, /Hide from catalog/);
+    assert.match(blob, /product-desc/);
+    assert.match(blob, /product-photo/);
+    assert.match(blob, /uploadSkuCatalogImage/);
+    assert.match(blob, /catalogImageSrc/);
     assert.match(blob, /Change serial/);
     assert.match(blob, /listCategories/);
     assert.match(blob, /Pick a category/);
     assert.match(blob, /deleteCategory/);
-    assert.match(blob, /Show \{retired\.length\} retired serial/);
+    assert.match(blob, /Retired serials are hidden/);
     assert.match(blob, /Add category/);
     assert.match(blob, /\/categories/);
     const invApiSrc = fs.readFileSync(path.join(root, 'src', 'lib', 'inventoryApi.ts'), 'utf8');

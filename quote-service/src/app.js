@@ -31,7 +31,12 @@ export function createApp({ pool, verify, expectedTenantId, allowedOrigins = [],
       credentials: true,
     })(req, res, next);
   });
-  app.use(express.json({ limit: '32kb' }));
+  app.use((req, res, next) => {
+    const largeBody =
+      req.method === 'POST' &&
+      /\/inventory\/skus\/[0-9a-f-]{36}\/catalog-image$/i.test(req.path || req.url || '');
+    express.json({ limit: largeBody ? '3mb' : '32kb' })(req, res, next);
+  });
   app.use((req, _res, next) => {
     req.log = req.log || { error() {}, info() {}, warn() {} };
     next();

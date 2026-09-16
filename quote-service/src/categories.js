@@ -98,24 +98,27 @@ export async function removeCategory(db, schema, tenantId, categoryId, reassignT
   const skuCount = countRows[0]?.n || 0;
   if (skuCount > 0) {
     const next = clipName(reassignTo);
-    if (!next) {
-      const err = new Error('SKUs still use this category. Choose a category to reassign them to.');
-      err.status = 409;
-      err.body = { error: err.message, sku_count: skuCount };
-      throw err;
+    if (next) {
+      const canonical = await requireListedCategory(db, schema, tenantId, next);
+      if (canonical.toLowerCase() === oldName.toLowerCase()) {
+        const err = new Error('Choose a different category to reassign SKUs to.');
+        err.status = 400;
+        throw err;
+      }
+      await db.query(
+        `UPDATE ${schema}.inventory_skus
+            SET category = $3, updated_at = now()
+          WHERE tenant_id = $1 AND category = $2`,
+        [tenantId, oldName, canonical]
+      );
+    } else {
+      await db.query(
+        `UPDATE ${schema}.inventory_skus
+            SET category = NULL, updated_at = now()
+          WHERE tenant_id = $1 AND category = $2`,
+        [tenantId, oldName]
+      );
     }
-    const canonical = await requireListedCategory(db, schema, tenantId, next);
-    if (canonical.toLowerCase() === oldName.toLowerCase()) {
-      const err = new Error('Choose a different category to reassign SKUs to.');
-      err.status = 400;
-      throw err;
-    }
-    await db.query(
-      `UPDATE ${schema}.inventory_skus
-          SET category = $3, updated_at = now()
-        WHERE tenant_id = $1 AND category = $2`,
-      [tenantId, oldName, canonical]
-    );
   }
   await db.query(
     `DELETE FROM ${schema}.inventory_categories

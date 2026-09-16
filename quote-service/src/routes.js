@@ -80,22 +80,58 @@ export function quoteRoutes(ctx) {
     }
     try {
       const { schema, db } = await scoped(req);
-      const { rows } = await db.query(
-        `INSERT INTO ${schema}.customers
-           (tenant_id, name, email, phone, billing_address, site_address)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         RETURNING id, name, email, phone, billing_address, site_address, user_id, created_at`,
-        [
-          tenantId,
-          name,
-          email.toLowerCase(),
-          clip(req.body?.phone, PHONE_MAX),
-          clip(req.body?.billing_address, TEXT_MAX),
-          clip(req.body?.site_address, TEXT_MAX),
-        ]
+      const normalized = email.toLowerCase();
+      const existing = await db.query(
+        `SELECT id FROM ${schema}.customers
+          WHERE tenant_id = $1 AND lower(email) = $2
+          LIMIT 1`,
+        [tenantId, normalized]
       );
+      let rows;
+      if (existing.rows[0]) {
+        rows = (
+          await db.query(
+            `UPDATE ${schema}.customers
+                SET name = $3,
+                    phone = COALESCE($4, phone),
+                    billing_address = COALESCE($5, billing_address),
+                    site_address = COALESCE($6, site_address),
+                    updated_at = now()
+              WHERE id = $1 AND tenant_id = $2
+            RETURNING id, name, email, phone, billing_address, site_address, user_id, created_at`,
+            [
+              existing.rows[0].id,
+              tenantId,
+              name,
+              clip(req.body?.phone, PHONE_MAX),
+              clip(req.body?.billing_address, TEXT_MAX),
+              clip(req.body?.site_address, TEXT_MAX),
+            ]
+          )
+        ).rows;
+      } else {
+        rows = (
+          await db.query(
+            `INSERT INTO ${schema}.customers
+               (tenant_id, name, email, phone, billing_address, site_address)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             RETURNING id, name, email, phone, billing_address, site_address, user_id, created_at`,
+            [
+              tenantId,
+              name,
+              normalized,
+              clip(req.body?.phone, PHONE_MAX),
+              clip(req.body?.billing_address, TEXT_MAX),
+              clip(req.body?.site_address, TEXT_MAX),
+            ]
+          )
+        ).rows;
+      }
       res.status(201).json({ customer: rows[0], schema });
     } catch (err) {
+      if (err?.code === '23505') {
+        return res.status(409).json({ error: 'A customer with that email already exists' });
+      }
       req.log?.error?.({ err }, 'customer create failed');
       res.status(500).json({ error: 'Failed to create customer' });
     }
@@ -438,7 +474,7 @@ export function quoteRoutes(ctx) {
                 q.load_out_time::text AS load_out_time, q.created_at,
                 q.customer_signing_token, q.staff_signing_token,
                 q.payment_link_url, q.payment_link_id,
-                c.name AS customer_name, c.email AS customer_email,
+                c.name AS customer_name, c.email AS customer_email, c.phone AS customer_phone,
                 (SELECT MIN(r.held_until)
                    FROM ${schema}.inventory_reservations r
                   WHERE r.quote_id = q.id

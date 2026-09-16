@@ -130,7 +130,7 @@ export default function OrdersPage({ email }: Props) {
           <div className="eyebrow" style={{ color: 'var(--crab)' }}>
             Orders
           </div>
-          <h2>Reopen, cancel, or release a hold.</h2>
+          <h2>Open rentals, holds, and paid bookings.</h2>
         </div>
         <p className="muted">{email}</p>
       </div>
@@ -180,7 +180,7 @@ export default function OrdersPage({ email }: Props) {
                 <div>
                   <strong>{quote.customer_name || 'Renter'}</strong>
                   <div className="muted">
-                    {quote.customer_email || ''}
+                    {[quote.customer_email, quote.customer_phone].filter(Boolean).join(' · ')}
                     {quote.starts_on && quote.ends_on
                       ? ` · ${quote.starts_on}${
                           parseHm(quote.load_in_time) ? ` ${formatPrettyTime(parseHm(quote.load_in_time)!)}` : ''
