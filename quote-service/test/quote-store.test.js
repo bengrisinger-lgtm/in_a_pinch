@@ -38,12 +38,15 @@ function makePool() {
       const row = {
         id: 'c0000000-0000-0000-0000-000000000001',
         name: params[1],
-        email: params[2],
-        phone: params[3],
-        billing_address: params[4],
-        site_address: params[5],
+        first_name: params[2],
+        last_name: params[3],
+        email: params[4],
+        phone: params[5],
+        billing_address: params[6],
+        site_address: params[7],
         user_id: null,
         created_at: '2026-09-10T00:00:00.000Z',
+        updated_at: '2026-09-10T00:00:00.000Z',
         tenant_id: params[0],
       };
       customers[schema] = customers[schema] || [];
@@ -300,7 +303,19 @@ describe('ensureQuoteTables', () => {
     const { schema } = await ensureQuoteTables(db, TENANT_A);
     assert.equal(schema, SCHEMA_A);
     const sql = calls.join('\n');
-    for (const t of ['customers', 'quotes', 'quote_line_items', 'payments', 'inventory_skus', 'inventory_units', 'inventory_categories', 'inventory_reservations']) {
+    for (const t of [
+      'customers',
+      'quotes',
+      'quote_line_items',
+      'payments',
+      'staff_members',
+      'staff_profiles',
+      'staff_profile_field_defs',
+      'inventory_skus',
+      'inventory_units',
+      'inventory_categories',
+      'inventory_reservations',
+    ]) {
       assert.match(sql, new RegExp(`CREATE TABLE IF NOT EXISTS ${SCHEMA_A}\\.${t}`));
       assert.match(sql, new RegExp(`ALTER TABLE ${SCHEMA_A}\\.${t} FORCE ROW LEVEL SECURITY`));
     }

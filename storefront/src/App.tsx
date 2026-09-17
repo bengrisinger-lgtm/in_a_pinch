@@ -58,9 +58,17 @@ import OrdersPage from './pages/OrdersPage';
 
 import StockPage from './pages/StockPage';
 
+import CustomersPage from './pages/CustomersPage';
+
+import StaffHirePage from './pages/StaffHirePage';
+
+import StaffOnboardingPage from './pages/StaffOnboardingPage';
+
+import { claimOnboarding, getOnboardingStatus } from './lib/staffApi';
 
 
-type View = 'home' | 'catalog' | 'stock' | 'orders';
+
+type View = 'home' | 'catalog' | 'stock' | 'orders' | 'customers' | 'staff-hire' | 'onboarding';
 
 
 
@@ -81,6 +89,10 @@ export default function App() {
   const [catalogEpoch, setCatalogEpoch] = useState(0);
 
   const [sessionError, setSessionError] = useState<string | null>(null);
+
+  const [onboardingRequired, setOnboardingRequired] = useState(false);
+
+  const [onboardingChecked, setOnboardingChecked] = useState(false);
 
   const [checkoutLocked, setCheckoutLocked] = useState(false);
 
@@ -211,6 +223,68 @@ export default function App() {
 
   useEffect(() => {
 
+    if (loading || !user || consumer || !isStaffUser(user)) {
+
+      setOnboardingChecked(true);
+
+      return;
+
+    }
+
+    let cancelled = false;
+
+    (async () => {
+
+      try {
+
+        try {
+
+          await claimOnboarding(user.email);
+
+        } catch {
+
+          /* already linked or no hire row */
+
+        }
+
+        const status = await getOnboardingStatus();
+
+        if (cancelled) return;
+
+        setOnboardingRequired(Boolean(status.required));
+
+        if (status.required) {
+
+          window.location.hash = '#onboarding';
+
+          setView('onboarding');
+
+        }
+
+      } catch {
+
+        if (!cancelled) setOnboardingRequired(false);
+
+      } finally {
+
+        if (!cancelled) setOnboardingChecked(true);
+
+      }
+
+    })();
+
+    return () => {
+
+      cancelled = true;
+
+    };
+
+  }, [loading, user, consumer]);
+
+
+
+  useEffect(() => {
+
     if (loading || !user || checkoutLocked || stickyHydrated.current) return;
 
     stickyHydrated.current = true;
@@ -307,13 +381,29 @@ export default function App() {
 
     if (loading || staffTools || consumer) return;
 
-    if (view === 'home' || view === 'stock' || view === 'orders') {
+    if (view === 'home' || view === 'stock' || view === 'orders' || view === 'customers' || view === 'staff-hire') {
 
       window.location.hash = '#rentals';
 
     }
 
   }, [loading, staffTools, consumer, view]);
+
+
+
+  useEffect(() => {
+
+    if (!onboardingRequired || !staffTools) return;
+
+    if (view !== 'onboarding') {
+
+      window.location.hash = '#onboarding';
+
+      setView('onboarding');
+
+    }
+
+  }, [onboardingRequired, staffTools, view]);
 
 
 
@@ -461,7 +551,7 @@ export default function App() {
 
 
 
-  if (loading) {
+  if (loading || (staffTools && !onboardingChecked && !consumer)) {
 
     return (
 
@@ -533,6 +623,10 @@ export default function App() {
 
             {consumer ? <a href="#contact">Contact</a> : null}
 
+            {staffTools && !onboardingRequired ? <a href="#customers">Customers</a> : null}
+
+            {staffTools && !onboardingRequired ? <a href="#staff-hire">New hire</a> : null}
+
             {staffTools ? <a href="#orders">Orders</a> : null}
 
             {staffTools ? <a href="#stock">Stock</a> : null}
@@ -583,11 +677,43 @@ export default function App() {
 
       </header>
 
-      {staffTools && view === 'home' ? <HubHome email={user.email} /> : null}
+      {staffTools && view === 'onboarding' ? (
 
-      {staffTools && view === 'stock' ? <StockPage email={user.email} /> : null}
+        <StaffOnboardingPage
 
-      {staffTools && view === 'orders' ? <OrdersPage email={user.email} /> : null}
+          email={user.email}
+
+          onDone={() => {
+
+            setOnboardingRequired(false);
+
+            window.location.hash = '#home';
+
+            setView('home');
+
+          }}
+
+        />
+
+      ) : null}
+
+      {staffTools && !onboardingRequired && view === 'home' ? <HubHome email={user.email} /> : null}
+
+      {staffTools && !onboardingRequired && view === 'customers' ? (
+
+        <CustomersPage email={user.email} />
+
+      ) : null}
+
+      {staffTools && !onboardingRequired && view === 'staff-hire' ? (
+
+        <StaffHirePage email={user.email} />
+
+      ) : null}
+
+      {staffTools && !onboardingRequired && view === 'stock' ? <StockPage email={user.email} /> : null}
+
+      {staffTools && !onboardingRequired && view === 'orders' ? <OrdersPage email={user.email} /> : null}
 
       <div hidden={staffTools && view !== 'catalog'}>
 
@@ -708,6 +834,12 @@ function hashView(): View {
   if (hash === 'stock') return 'stock';
 
   if (hash === 'orders') return 'orders';
+
+  if (hash === 'customers') return 'customers';
+
+  if (hash === 'staff-hire') return 'staff-hire';
+
+  if (hash === 'onboarding') return 'onboarding';
 
   if (hash === 'catalog' || hash === 'rentals') return 'catalog';
 

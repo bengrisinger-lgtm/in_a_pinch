@@ -154,6 +154,51 @@ const TABLES = [
     `,
   },
   {
+    name: 'staff_members',
+    ddl: `
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id UUID NOT NULL,
+      user_id UUID,
+      email TEXT NOT NULL,
+      first_name TEXT NOT NULL,
+      last_name TEXT NOT NULL,
+      phone TEXT,
+      onboarding_completed_at TIMESTAMPTZ,
+      created_by UUID,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    `,
+  },
+  {
+    name: 'staff_profiles',
+    ddl: `
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id UUID NOT NULL,
+      staff_member_id UUID NOT NULL UNIQUE,
+      home_address TEXT,
+      preferred_pronouns TEXT,
+      emergency_contact_first_name TEXT,
+      emergency_contact_last_name TEXT,
+      emergency_contact_relationship TEXT,
+      extra JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    `,
+  },
+  {
+    name: 'staff_profile_field_defs',
+    ddl: `
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id UUID NOT NULL,
+      field_key TEXT NOT NULL,
+      label TEXT NOT NULL,
+      field_type TEXT NOT NULL DEFAULT 'text',
+      sort_order INT NOT NULL DEFAULT 100,
+      created_by UUID,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    `,
+  },
+  {
     name: 'inventory_reservations',
     ddl: `
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -345,6 +390,34 @@ export async function ensureQuoteTables(db, tenantId) {
   await db.query(
     `CREATE UNIQUE INDEX IF NOT EXISTS customers_tenant_email_uidx
         ON ${schema}.customers (tenant_id, lower(email))`
+  );
+  await db.query(
+    `ALTER TABLE ${schema}.customers ADD COLUMN IF NOT EXISTS first_name TEXT`
+  );
+  await db.query(
+    `ALTER TABLE ${schema}.customers ADD COLUMN IF NOT EXISTS last_name TEXT`
+  );
+  await db.query(
+    `UPDATE ${schema}.customers
+        SET first_name = split_part(name, ' ', 1),
+            last_name = nullif(trim(substring(name from position(' ' in name))), '')
+      WHERE (first_name IS NULL OR first_name = '')
+        AND name IS NOT NULL
+        AND position(' ' in name) > 0`
+  );
+  await db.query(
+    `UPDATE ${schema}.customers
+        SET first_name = name, last_name = ''
+      WHERE (first_name IS NULL OR first_name = '')
+        AND name IS NOT NULL`
+  );
+  await db.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS staff_members_tenant_email_uidx
+        ON ${schema}.staff_members (tenant_id, lower(email))`
+  );
+  await db.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS staff_profile_field_defs_key_uidx
+        ON ${schema}.staff_profile_field_defs (tenant_id, field_key)`
   );
   return { schema, tables: TABLES.map((t) => t.name) };
 }

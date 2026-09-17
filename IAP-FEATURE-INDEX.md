@@ -39,6 +39,8 @@
 | IAP-Orders-Phone | Live 2026-09-16 | Phone on Orders list | `GET /quotes` includes `customer_phone` | `customers.phone` | pinch + hub |
 | IAP-Stock-Codes | Live 2026-09-17 | Unit codes `MIC-0001`; Manage categories modal; retired SKUs off Stock | `stockCodes.js`, category prefix PATCH, unit POST | `stock_prefix`, `stock_code`, `inventory_stock_sequences` | pinch + hub |
 | IAP-Catalog-Photo-UX | Live 2026-09-17 | Orange banner + thumb; lightbox; apex tenant recovery | `catalogImage.js` public read; storefront guest remint | GCS `catalog-media/`; default both buckets in deploy | pinch + hub + apex; TenantId `987bcdaf-320d-46bf-bfb3-4bdcdffe1de1` |
+| IAP-Customers-Hub | Live 2026-09-17 | Hub Customers list; search; merge/edit/remove | `customers.js` staff routes | `customers.first_name`, `last_name` | pinch + hub |
+| IAP-Staff-Onboarding | Live 2026-09-17 | New hire entry; onboarding gate; custom profile fields | `staff.js` `/staff/*` | `staff_members`, `staff_profiles`, `staff_profile_field_defs` | pinch + hub; invite via Vault Projects |
 
 **Catalog media security:** Public storefront assets only — **not** vault §8 document scan path. Staff-only upload; https or `/catalog-media/` paths validated.
 
@@ -51,7 +53,7 @@
 | ID | Feature | Notes |
 |----|---------|-------|
 | IAP-N1 | Itemized gear on signed agreement PDF | November |
-| IAP-CRM | Contacts / leads / venues / promoters | Multi-role contacts; unique email — design in playbook queue |
+| IAP-CRM | Contacts / leads / venues / promoters | Beyond **IAP-Customers-Hub** (renters only); multi-role — later |
 | IAP-Open-Board | Staff “open rentals” view (gear + customer + phone) | Extend `#orders` / new hub nav |
 | IAP-Find-Retired | Restore retired serials UI | After retired hidden (IAP-Stock-Ops) |
 | IAP-SMS | Phone proof at checkout | Pulled from IAP-G; later |

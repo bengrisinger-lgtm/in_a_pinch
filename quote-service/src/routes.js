@@ -12,6 +12,9 @@ import { deliveryFeeFromOneWay } from './delivery.js';
 import { applyPaidQuote, applyRefundedQuote } from './paid.js';
 import { dollarsToCents } from './square.js';
 import { billingDays, LOAD_IN_DEFAULT, LOAD_OUT_DEFAULT, parseHm } from './rentalPeriod.js';
+import { customerRoutes } from './customers.js';
+import { staffRoutes } from './staff.js';
+import { joinDisplayName, normalizeEmail, splitDisplayName } from './names.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const UUID_RE =
@@ -71,71 +74,9 @@ export function quoteRoutes(ctx) {
     return { tenantId, schema, db: wrapWithTenant(pool, tenantId) };
   }
 
-  router.post('/customers', staff, async (req, res) => {
-    const tenantId = hmacTenantId(req);
-    const name = clip(req.body?.name, NAME_MAX);
-    const email = clip(req.body?.email, EMAIL_MAX);
-    if (!name || !email || !EMAIL_RE.test(email)) {
-      return res.status(400).json({ error: 'name and email are required' });
-    }
-    try {
-      const { schema, db } = await scoped(req);
-      const normalized = email.toLowerCase();
-      const existing = await db.query(
-        `SELECT id FROM ${schema}.customers
-          WHERE tenant_id = $1 AND lower(email) = $2
-          LIMIT 1`,
-        [tenantId, normalized]
-      );
-      let rows;
-      if (existing.rows[0]) {
-        rows = (
-          await db.query(
-            `UPDATE ${schema}.customers
-                SET name = $3,
-                    phone = COALESCE($4, phone),
-                    billing_address = COALESCE($5, billing_address),
-                    site_address = COALESCE($6, site_address),
-                    updated_at = now()
-              WHERE id = $1 AND tenant_id = $2
-            RETURNING id, name, email, phone, billing_address, site_address, user_id, created_at`,
-            [
-              existing.rows[0].id,
-              tenantId,
-              name,
-              clip(req.body?.phone, PHONE_MAX),
-              clip(req.body?.billing_address, TEXT_MAX),
-              clip(req.body?.site_address, TEXT_MAX),
-            ]
-          )
-        ).rows;
-      } else {
-        rows = (
-          await db.query(
-            `INSERT INTO ${schema}.customers
-               (tenant_id, name, email, phone, billing_address, site_address)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             RETURNING id, name, email, phone, billing_address, site_address, user_id, created_at`,
-            [
-              tenantId,
-              name,
-              normalized,
-              clip(req.body?.phone, PHONE_MAX),
-              clip(req.body?.billing_address, TEXT_MAX),
-              clip(req.body?.site_address, TEXT_MAX),
-            ]
-          )
-        ).rows;
-      }
-      res.status(201).json({ customer: rows[0], schema });
-    } catch (err) {
-      if (err?.code === '23505') {
-        return res.status(409).json({ error: 'A customer with that email already exists' });
-      }
-      req.log?.error?.({ err }, 'customer create failed');
-      res.status(500).json({ error: 'Failed to create customer' });
-    }
-  });
+  router.use('/customers', customerRoutes({ pool, staff }));
+
+  router.use('/staff', staffRoutes({ pool, staff }));
 
   router.post('/checkout', async (req, res) => {
     const tenantId = hmacTenantId(req);
@@ -235,18 +176,26 @@ export function quoteRoutes(ctx) {
             LIMIT 1`,
           [tenantId, email.toLowerCase()]
         );
+        const { first_name: fn, last_name: ln } = splitDisplayName(name);
         let customerId = existing.rows[0]?.id;
         let customer;
         if (customerId) {
           const updated = await client.query(
             `UPDATE ${schemaName}.customers
-                SET name = $3, phone = $4, site_address = $5, updated_at = now()
+                SET name = $3,
+                    first_name = $4,
+                    last_name = $5,
+                    phone = $6,
+                    site_address = $7,
+                    updated_at = now()
               WHERE id = $1 AND tenant_id = $2
             RETURNING id, name, email, phone, billing_address, site_address, user_id, created_at`,
             [
               customerId,
               tenantId,
-              name,
+              joinDisplayName(fn, ln),
+              fn,
+              ln,
               clip(req.body?.phone, PHONE_MAX),
               fulfillment === 'delivery' ? deliveryAddress : clip(req.body?.site_address, TEXT_MAX),
             ]
@@ -255,13 +204,15 @@ export function quoteRoutes(ctx) {
         } else {
           const inserted = await client.query(
             `INSERT INTO ${schemaName}.customers
-               (tenant_id, name, email, phone, billing_address, site_address)
-             VALUES ($1, $2, $3, $4, $5, $6)
+               (tenant_id, name, first_name, last_name, email, phone, billing_address, site_address)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
              RETURNING id, name, email, phone, billing_address, site_address, user_id, created_at`,
             [
               tenantId,
-              name,
-              email.toLowerCase(),
+              joinDisplayName(fn, ln),
+              fn,
+              ln,
+              normalizeEmail(email),
               clip(req.body?.phone, PHONE_MAX),
               clip(req.body?.billing_address, TEXT_MAX),
               fulfillment === 'delivery' ? deliveryAddress : clip(req.body?.site_address, TEXT_MAX),
@@ -367,22 +318,6 @@ export function quoteRoutes(ctx) {
       }
       req.log?.error?.({ err }, 'checkout failed');
       res.status(500).json({ error: 'Failed to save checkout' });
-    }
-  });
-
-  router.get('/customers', staff, async (req, res) => {
-    try {
-      const { schema, db } = await scoped(req);
-      const { rows } = await db.query(
-        `SELECT id, name, email, phone, billing_address, site_address, user_id, created_at
-           FROM ${schema}.customers
-          ORDER BY created_at DESC
-          LIMIT 100`
-      );
-      res.json({ customers: rows, schema });
-    } catch (err) {
-      req.log?.error?.({ err }, 'customer list failed');
-      res.status(500).json({ error: 'Failed to list customers' });
     }
   });
 

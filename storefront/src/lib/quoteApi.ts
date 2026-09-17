@@ -7,7 +7,7 @@ function gatewayUrl(): string {
   return url.replace(/\/$/, '');
 }
 
-async function quoteFetch<T>(path: string, options: RequestInit = {}, tenantRetried = false): Promise<T> {
+export async function quoteFetch<T>(path: string, options: RequestInit = {}, tenantRetried = false): Promise<T> {
   const res = await fetch(`${gatewayUrl()}/api/v1/quotes${path}`, {
     ...options,
     credentials: 'include',

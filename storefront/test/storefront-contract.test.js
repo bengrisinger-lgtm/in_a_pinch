@@ -159,8 +159,12 @@ describe('IAP storefront contract', () => {
     assert.match(blob, /Add category/);
     assert.match(blob, /\/categories/);
     const invApiSrc = fs.readFileSync(path.join(root, 'src', 'lib', 'inventoryApi.ts'), 'utf8');
+    const crmApiSrc = fs.readFileSync(path.join(root, 'src', 'lib', 'crmApi.ts'), 'utf8');
     assert.match(invApiSrc, /method: 'DELETE'/);
-    assert.doesNotMatch(blob.replace(invApiSrc, ''), /method:\s*['"]DELETE['"]/);
+    assert.match(crmApiSrc, /method: 'DELETE'/);
+    assert.doesNotMatch(blob.replace(invApiSrc, '').replace(crmApiSrc, ''), /method:\s*['"]DELETE['"]/);
+    assert.match(blob, /#customers/);
+    assert.doesNotMatch(fs.readFileSync(path.join(root, 'src', 'pages', 'HubHome.tsx'), 'utf8'), /title: 'Photos'/);
     assert.doesNotMatch(blob, /x:\s*72,\s*y:\s*640/);
     assert.doesNotMatch(blob, /signer_index/);
     assert.doesNotMatch(blob, /PdfBlockEditor/);
