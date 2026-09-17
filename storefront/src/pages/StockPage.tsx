@@ -1,7 +1,8 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { catalogImageSrc } from '../lib/catalogImage';
 import {
   createCategory,
+  patchCategory,
   deleteCategory,
   createSku,
   createUnit,
@@ -19,6 +20,17 @@ import {
 
 type Props = { email: string };
 
+/** Show new SKUs with no serials; hide SKUs whose units are all retired. */
+function skuVisibleOnStock(unitsForSku: InventoryUnit[] | undefined): boolean {
+  const list = unitsForSku ?? [];
+  if (list.length === 0) return true;
+  return list.some((u) => u.status === 'active');
+}
+
+function unitLabel(unit: InventoryUnit): string {
+  return (unit.stock_code && unit.stock_code.trim()) || unit.serial_number;
+}
+
 export default function StockPage({ email }: Props) {
   const [skus, setSkus] = useState<Sku[]>([]);
   const [units, setUnits] = useState<Record<string, InventoryUnit[]>>({});
@@ -27,6 +39,7 @@ export default function StockPage({ email }: Props) {
   const [name, setName] = useState('');
   const [category, setCategory] = useState('');
   const [newCategory, setNewCategory] = useState('');
+  const [newCategoryPrefix, setNewCategoryPrefix] = useState('');
   const [rate, setRate] = useState('25');
   const [newDescription, setNewDescription] = useState('');
   const [descDraft, setDescDraft] = useState<Record<string, string>>({});
@@ -35,6 +48,13 @@ export default function StockPage({ email }: Props) {
   const [busy, setBusy] = useState(false);
   const [deleteCategoryTarget, setDeleteCategoryTarget] = useState<InventoryCategory | null>(null);
   const [deleteCategoryConfirm, setDeleteCategoryConfirm] = useState('');
+  const [categoryManagerOpen, setCategoryManagerOpen] = useState(false);
+  const [prefixDraft, setPrefixDraft] = useState<Record<string, string>>({});
+
+  const visibleSkus = useMemo(
+    () => skus.filter((sku) => skuVisibleOnStock(units[sku.id])),
+    [skus, units]
+  );
 
   async function refresh() {
     const [data, cats] = await Promise.all([listSkus(), listCategories()]);
@@ -64,8 +84,42 @@ export default function StockPage({ email }: Props) {
     };
   }, []);
 
+  function openCategoryManager() {
+    setPrefixDraft(
+      Object.fromEntries(categories.map((c) => [c.id, (c.stock_prefix ?? '').toUpperCase()]))
+    );
+    setCategoryManagerOpen(true);
+  }
+
+  async function saveCategoryPrefix(categoryId: string) {
+    const raw = (prefixDraft[categoryId] ?? '').trim().toUpperCase();
+    if (raw.length > 0 && raw.length !== 3) {
+      setError('Stock prefix must be exactly 3 letters or numbers (e.g. MIC).');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const data = await patchCategory(categoryId, { stock_prefix: raw || null });
+      setCategories(data.categories);
+      setPrefixDraft(
+        Object.fromEntries(
+          data.categories.map((c) => [c.id, (c.stock_prefix ?? '').toUpperCase()])
+        )
+      );
+    } catch (err) {
+      setError(apiMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function onCreateSku(e: FormEvent) {
     e.preventDefault();
+    if (!name.trim()) {
+      setError('SKU name is required.');
+      return;
+    }
     if (!category.trim()) {
       setError('Pick a category from the list.');
       return;
@@ -94,12 +148,18 @@ export default function StockPage({ email }: Props) {
     e.preventDefault();
     const typed = newCategory.trim();
     if (!typed) return;
+    const prefix = newCategoryPrefix.trim().toUpperCase();
+    if (prefix.length > 0 && prefix.length !== 3) {
+      setError('Stock prefix must be exactly 3 letters or numbers (e.g. MIC).');
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      const data = await createCategory(typed);
+      const data = await createCategory(typed, prefix || undefined);
       setCategories(data.categories);
       setNewCategory('');
+      setNewCategoryPrefix('');
       setCategory(data.name);
     } catch (err) {
       setError(apiMessage(err));
@@ -110,11 +170,10 @@ export default function StockPage({ email }: Props) {
 
   async function onAddSerial(skuId: string) {
     const serial = (serials[skuId] || '').trim();
-    if (!serial) return;
     setBusy(true);
     setError(null);
     try {
-      await createUnit(skuId, { serial_number: serial });
+      await createUnit(skuId, serial ? { serial_number: serial } : undefined);
       setSerials((prev) => ({ ...prev, [skuId]: '' }));
       await refresh();
     } catch (err) {
@@ -189,49 +248,26 @@ export default function StockPage({ email }: Props) {
       </div>
       <p className="banner">
         This is this unit, not a quantity bucket. Retire a serial to rotate it out — it stays on
-        past bookings and leaves the calendar. Hide a SKU to take it off the catalog. HMAC tenant
-        comes from the session — never send a tenant id from this page.
+        past bookings and leaves the calendar. When every serial on a SKU is retired, that SKU
+        leaves this page (Find retired is coming). Each unit gets a stock code (e.g. MIC-0001) from
+        its category prefix. Hide a SKU to take it off the renter catalog only. HMAC tenant comes
+        from the session — never send a tenant id from this page.
       </p>
       {error ? <p className="banner error">{error}</p> : null}
 
-      <div className="category-manager">
-        <h3>Categories</h3>
+      <div className="stock-category-entry">
+        <button
+          type="button"
+          className="secondary"
+          disabled={busy}
+          onClick={openCategoryManager}
+        >
+          Manage categories…
+        </button>
         <p className="muted">
-          Add names here first, then pick from the list when you add a SKU — free typing is not
-          allowed. Remove a label with × — type DELETE to confirm. SKUs that used that label
-          become uncategorized (pick a new category on each SKU). The shop only shows a filter
-          after a SKU uses that name.
+          Pick a category below when adding a SKU. Adding or removing category labels is a separate
+          step — not something to do while entering stock.
         </p>
-        <div className="category-chips">
-          {categories.map((cat) => (
-            <span className="category-chip" key={cat.id}>
-              {cat.name}
-              <button
-                type="button"
-                className="category-chip-remove"
-                disabled={busy}
-                aria-label={`Remove category ${cat.name}`}
-                onClick={() => openDeleteCategory(cat)}
-              >
-                ×
-              </button>
-            </span>
-          ))}
-        </div>
-        <form className="category-add" onSubmit={onCreateCategory}>
-          <label htmlFor="newCat">Add a category</label>
-          <div className="addrow stock-serial">
-            <input
-              id="newCat"
-              value={newCategory}
-              onChange={(e) => setNewCategory(e.target.value)}
-              placeholder="Projectors"
-            />
-            <button type="submit" disabled={busy || !newCategory.trim()}>
-              Add category
-            </button>
-          </div>
-        </form>
       </div>
 
       <form className="stock-form" onSubmit={onCreateSku}>
@@ -291,7 +327,7 @@ export default function StockPage({ email }: Props) {
         </div>
       </form>
 
-      {skus.map((sku) => (
+      {visibleSkus.map((sku) => (
         <article key={sku.id} className="product" style={{ marginBottom: 16 }}>
           <div className="product-body">
             <div className="sku-cat-row">
@@ -397,11 +433,16 @@ export default function StockPage({ email }: Props) {
                       onChange={(e) =>
                         setEditing((prev) => ({ ...prev, [unit.id]: e.target.value }))
                       }
-                      aria-label={`New serial for ${unit.serial_number}`}
+                      aria-label={`Manufacturer serial for ${unitLabel(unit)}`}
                     />
                   ) : (
                     <span>
-                      <strong>{unit.serial_number}</strong>
+                      <strong>{unitLabel(unit)}</strong>
+                      {unit.stock_code &&
+                      unit.serial_number &&
+                      unit.serial_number !== unit.stock_code ? (
+                        <span className="muted"> · MFG {unit.serial_number}</span>
+                      ) : null}
                       {unit.nickname ? ` · ${unit.nickname}` : ''}
                     </span>
                   )}
@@ -459,7 +500,7 @@ export default function StockPage({ email }: Props) {
                         setEditing((prev) => ({ ...prev, [unit.id]: unit.serial_number }))
                       }
                     >
-                      Change serial
+                      MFG serial
                     </button>
                   )}
                   <button
@@ -469,7 +510,7 @@ export default function StockPage({ email }: Props) {
                     onClick={() => {
                       if (
                         !window.confirm(
-                          `Retire ${unit.serial_number}? It stays on past bookings and leaves the calendar. Retired serials are hidden here until we add Find retired items.`
+                          `Retire ${unitLabel(unit)}? It stays on past bookings and leaves the calendar. When the last serial on this SKU is retired, the SKU leaves Stock until we add Find retired.`
                         )
                       ) {
                         return;
@@ -486,10 +527,10 @@ export default function StockPage({ email }: Props) {
               <input
                 value={serials[sku.id] || ''}
                 onChange={(e) => setSerials((prev) => ({ ...prev, [sku.id]: e.target.value }))}
-                placeholder="Serial number"
+                placeholder="Manufacturer serial (optional)"
               />
               <button type="button" disabled={busy} onClick={() => onAddSerial(sku.id)}>
-                Add serial
+                Add unit
               </button>
             </div>
             <div className="sku-actions">
@@ -526,6 +567,105 @@ export default function StockPage({ email }: Props) {
         </article>
       ))}
       {skus.length === 0 ? <p className="muted">No SKUs yet.</p> : null}
+      {skus.length > 0 && visibleSkus.length === 0 ? (
+        <p className="muted">
+          No active stock on this page. Fully retired SKUs are hidden until we add Find retired.
+        </p>
+      ) : null}
+
+      {categoryManagerOpen ? (
+        <div
+          className="confirm-backdrop"
+          role="presentation"
+          onClick={() => setCategoryManagerOpen(false)}
+        >
+          <div
+            className="confirm-panel category-manager-panel"
+            role="dialog"
+            aria-labelledby="category-manager-title"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="category-manager-title">Manage categories</h3>
+            <p className="muted">
+              Catalog filter labels and unit stock prefixes (MIC, SPK, …). Free typing is not allowed
+              on SKUs — names must exist here first. Remove a label with × and type DELETE to
+              confirm. SKUs that used that label become uncategorized.
+            </p>
+            <div className="category-chips">
+              {categories.map((cat) => (
+                <span className="category-chip" key={cat.id}>
+                  {cat.name}
+                  <label className="sr-only" htmlFor={`cat-prefix-${cat.id}`}>
+                    Stock prefix for {cat.name}
+                  </label>
+                  <input
+                    id={`cat-prefix-${cat.id}`}
+                    className="category-prefix-input"
+                    maxLength={3}
+                    disabled={busy}
+                    placeholder="PRF"
+                    value={prefixDraft[cat.id] ?? ''}
+                    onChange={(e) => {
+                      const v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 3);
+                      setPrefixDraft((prev) => ({ ...prev, [cat.id]: v }));
+                    }}
+                    aria-label={`Stock prefix for ${cat.name}`}
+                  />
+                  <button
+                    type="button"
+                    className="category-prefix-save"
+                    disabled={busy}
+                    onClick={() => void saveCategoryPrefix(cat.id)}
+                  >
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    className="category-chip-remove"
+                    disabled={busy}
+                    aria-label={`Remove category ${cat.name}`}
+                    onClick={() => openDeleteCategory(cat)}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+            <form className="category-add" onSubmit={onCreateCategory}>
+              <label htmlFor="newCat">Add a category</label>
+              <div className="addrow stock-serial">
+                <input
+                  id="newCat"
+                  value={newCategory}
+                  onChange={(e) => setNewCategory(e.target.value)}
+                  placeholder="Projectors"
+                />
+                <input
+                  className="category-prefix-input"
+                  maxLength={3}
+                  value={newCategoryPrefix}
+                  onChange={(e) =>
+                    setNewCategoryPrefix(
+                      e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 3)
+                    )
+                  }
+                  placeholder="PRJ"
+                  aria-label="Stock prefix for new category"
+                />
+                <button type="submit" disabled={busy || !newCategory.trim()}>
+                  Add category
+                </button>
+              </div>
+            </form>
+            <div className="confirm-actions">
+              <button type="button" className="btn orange" disabled={busy} onClick={() => setCategoryManagerOpen(false)}>
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {deleteCategoryTarget ? (
         <div className="confirm-backdrop" role="presentation" onClick={closeDeleteCategory}>
@@ -539,8 +679,7 @@ export default function StockPage({ email }: Props) {
             <h3 id="delete-cat-title">Delete category “{deleteCategoryTarget.name}”?</h3>
             <p className="muted">
               SKUs using this label will become uncategorized. You can pick a new category on each
-              SKU in this list. This cannot be undone from here — you would add the name again under
-              Categories.
+              SKU in this list. To add the name again, open Manage categories.
             </p>
             <label htmlFor="delete-cat-confirm">Type DELETE to confirm</label>
             <input

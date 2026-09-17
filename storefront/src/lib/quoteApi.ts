@@ -1,4 +1,5 @@
 import type { Hold } from './inventoryApi';
+import { isWrongTenantApiError, recoverConsumerTenantSession } from './kit';
 
 function gatewayUrl(): string {
   const url = import.meta.env.VITE_API_GATEWAY_URL;
@@ -6,7 +7,7 @@ function gatewayUrl(): string {
   return url.replace(/\/$/, '');
 }
 
-async function quoteFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+async function quoteFetch<T>(path: string, options: RequestInit = {}, tenantRetried = false): Promise<T> {
   const res = await fetch(`${gatewayUrl()}/api/v1/quotes${path}`, {
     ...options,
     credentials: 'include',
@@ -18,7 +19,15 @@ async function quoteFetch<T>(path: string, options: RequestInit = {}): Promise<T
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error || `HTTP ${res.status}`);
+    const message = body.error || `HTTP ${res.status}`;
+    if (
+      !tenantRetried &&
+      isWrongTenantApiError(res.status, message) &&
+      (await recoverConsumerTenantSession())
+    ) {
+      return quoteFetch(path, options, true);
+    }
+    throw new Error(message);
   }
   return res.json() as Promise<T>;
 }

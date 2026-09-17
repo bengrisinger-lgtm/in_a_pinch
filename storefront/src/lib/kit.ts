@@ -66,6 +66,27 @@ export function isStaffUser(user: CurrentUser | null): boolean {
   return role !== 'guest' && role !== 'app_user';
 }
 
+/** Host-branded guest cookie for apex renters (HttpOnly; gateway skips session gate). */
+export async function mintGuestSession(): Promise<boolean> {
+  const res = await fetch(`${gatewayUrl()}/api/v1/auth/guest`, {
+    method: 'GET',
+    credentials: 'include',
+    cache: 'no-store',
+    headers: { Accept: 'application/json' },
+  });
+  return res.ok;
+}
+
+export function isWrongTenantApiError(status: number, message: string | undefined): boolean {
+  return status === 403 && /wrong tenant for this service/i.test(message || '');
+}
+
+/** Re-bind apex session to this host's tenant after a stale cross-tenant cookie. */
+export async function recoverConsumerTenantSession(): Promise<boolean> {
+  if (!isConsumerSurface()) return false;
+  return mintGuestSession();
+}
+
 /**
  * Mint a guest storefront cookie when none exists. GET /api/v1/auth/guest
  * is skipped by gateway session check; Host branding binds tenant_id into
@@ -74,15 +95,11 @@ export function isStaffUser(user: CurrentUser | null): boolean {
 export async function ensureStorefrontSession(): Promise<CurrentUser | null> {
   const client = kit();
   const existing = await client.auth.getCurrentUser();
-  if (existing) return existing;
-  const res = await fetch(`${gatewayUrl()}/api/v1/auth/guest`, {
-    method: 'GET',
-    credentials: 'include',
-    cache: 'no-store',
-    headers: { Accept: 'application/json' },
-  });
-  if (!res.ok) return null;
-  return client.auth.getCurrentUser();
+  if (!existing) {
+    if (!(await mintGuestSession())) return null;
+    return client.auth.getCurrentUser();
+  }
+  return existing;
 }
 
 export function redirectToLogin(): void {

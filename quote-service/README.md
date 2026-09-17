@@ -22,7 +22,8 @@ Never mount `COOKIE_SECRET`. Never send tenant id from the browser.
 From this directory, with gcloud logged in:
 
 ```powershell
-.\deploy.ps1 -TenantId "<uuid from the operator console>"
+.\deploy.ps1
+# defaults to TenantId 987bcdaf-320d-46bf-bfb3-4bdcdffe1de1 (In A Pinch / cadel-7414)
 ```
 
 If `TF_VAR_gcp_project_id` is not already in the shell, the script loads `symlfy-baas/syml-platform/infra/set-env.ps1 production`.

@@ -3,6 +3,8 @@
  * this table is the growing drop-menu. HMAC tenant only.
  */
 
+import { normalizeStockPrefix } from './stockCodes.js';
+
 const NAME_MAX = 200;
 
 export const STARTER_CATEGORIES = [
@@ -13,6 +15,15 @@ export const STARTER_CATEGORIES = [
   'Mixers',
 ];
 
+/** Default 3-char prefixes when a category has none yet (staff can change). */
+export const STARTER_STOCK_PREFIXES = {
+  Microphones: 'MIC',
+  Speakers: 'SPK',
+  Projectors: 'PRJ',
+  Lighting: 'LGT',
+  Mixers: 'MIX',
+};
+
 function clipName(raw) {
   if (raw == null || typeof raw !== 'string') return null;
   const s = raw.trim();
@@ -20,7 +31,7 @@ function clipName(raw) {
   return s.slice(0, NAME_MAX);
 }
 
-export async function upsertCategory(db, schema, tenantId, rawName) {
+export async function upsertCategory(db, schema, tenantId, rawName, rawPrefix) {
   const name = clipName(rawName);
   if (!name) return null;
   const existing = await db.query(
@@ -30,11 +41,20 @@ export async function upsertCategory(db, schema, tenantId, rawName) {
     [tenantId, name]
   );
   if (existing.rows[0]) return existing.rows[0].name;
+  let stockPrefix = null;
+  if (rawPrefix != null && String(rawPrefix).trim() !== '') {
+    stockPrefix = normalizeStockPrefix(rawPrefix);
+    if (!stockPrefix) {
+      const err = new Error('stock prefix must be exactly 3 letters or numbers');
+      err.status = 400;
+      throw err;
+    }
+  }
   try {
     await db.query(
-      `INSERT INTO ${schema}.inventory_categories (tenant_id, name)
-       VALUES ($1, $2)`,
-      [tenantId, name]
+      `INSERT INTO ${schema}.inventory_categories (tenant_id, name, stock_prefix)
+       VALUES ($1, $2, $3)`,
+      [tenantId, name, stockPrefix]
     );
     return name;
   } catch (err) {
@@ -53,6 +73,15 @@ export async function upsertCategory(db, schema, tenantId, rawName) {
 export async function syncInventoryCategories(db, schema, tenantId) {
   for (const name of STARTER_CATEGORIES) {
     await upsertCategory(db, schema, tenantId, name);
+    const starter = STARTER_STOCK_PREFIXES[name];
+    if (starter) {
+      await db.query(
+        `UPDATE ${schema}.inventory_categories
+            SET stock_prefix = $3
+          WHERE tenant_id = $1 AND name = $2 AND stock_prefix IS NULL`,
+        [tenantId, name, starter]
+      );
+    }
   }
 }
 
@@ -131,7 +160,7 @@ export async function removeCategory(db, schema, tenantId, categoryId, reassignT
 export async function listCategories(db, schema, tenantId) {
   await syncInventoryCategories(db, schema, tenantId);
   const { rows } = await db.query(
-    `SELECT id, name, created_at
+    `SELECT id, name, stock_prefix, created_at
        FROM ${schema}.inventory_categories
       WHERE tenant_id = $1
       ORDER BY name`,

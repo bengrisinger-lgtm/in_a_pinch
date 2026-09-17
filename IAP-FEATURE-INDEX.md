@@ -37,6 +37,8 @@
 | IAP-Catalog-Media | Live 2026-09-16 | SKU description + photo on catalog (hub + apex) | `PATCH /skus`, `POST .../catalog-image` | `description`, `image_url`; GCS `catalog-media/{skuId}.ext` | pinch + hub + apex; optional `$env:CATALOG_MEDIA_BUCKETS` |
 | IAP-Stock-Ops | Live 2026-09-16 | Category delete (type DELETE); retired serials hidden; remove photo | categories delete uncategorizes SKUs | `customers` unique email index | pinch + hub |
 | IAP-Orders-Phone | Live 2026-09-16 | Phone on Orders list | `GET /quotes` includes `customer_phone` | `customers.phone` | pinch + hub |
+| IAP-Stock-Codes | Live 2026-09-17 | Unit codes `MIC-0001`; Manage categories modal; retired SKUs off Stock | `stockCodes.js`, category prefix PATCH, unit POST | `stock_prefix`, `stock_code`, `inventory_stock_sequences` | pinch + hub |
+| IAP-Catalog-Photo-UX | Live 2026-09-17 | Orange banner + thumb; lightbox; apex tenant recovery | `catalogImage.js` public read; storefront guest remint | GCS `catalog-media/`; default both buckets in deploy | pinch + hub + apex; TenantId `987bcdaf-320d-46bf-bfb3-4bdcdffe1de1` |
 
 **Catalog media security:** Public storefront assets only — **not** vault §8 document scan path. Staff-only upload; https or `/catalog-media/` paths validated.
 

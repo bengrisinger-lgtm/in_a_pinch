@@ -159,11 +159,21 @@ export async function putCatalogImageObjects(opts) {
   await Promise.all(
     buckets.map(async (bucketName) => {
       const file = storage.bucket(bucketName).file(objectName);
-      await file.save(opts.buffer, {
+      const saveOpts = {
         contentType: opts.contentType,
         resumable: false,
         metadata: { cacheControl: 'public, max-age=3600' },
-      });
+      };
+      try {
+        await file.save(opts.buffer, { ...saveOpts, predefinedAcl: 'publicRead' });
+      } catch (err) {
+        const msg = err?.message || '';
+        if (/predefinedAcl|uniform bucket-level access|Cannot insert legacy ACL/i.test(msg)) {
+          await file.save(opts.buffer, saveOpts);
+        } else {
+          throw err;
+        }
+      }
     })
   );
   return opts.path;

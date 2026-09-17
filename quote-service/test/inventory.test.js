@@ -31,6 +31,7 @@ function makePool() {
   const units = {};
   const reservations = {};
   const categories = {};
+  const stockSequences = {};
 
   function record(sql, params) {
     const compact = String(sql).replace(/\s+/g, ' ').trim();
@@ -76,10 +77,34 @@ function makePool() {
         id: randomUUID(),
         tenant_id: tenantId,
         name,
+        stock_prefix: params[2] ?? null,
         created_at: '2026-09-14T00:00:00.000Z',
       };
       categories[schema].push(row);
       return { rows: [row] };
+    }
+
+    if (compact.includes('INSERT INTO') && compact.includes('.inventory_stock_sequences')) {
+      stockSequences[schema] = stockSequences[schema] || {};
+      stockSequences[schema][params[0]] = stockSequences[schema][params[0]] || {};
+      const prefix = params[1];
+      if (stockSequences[schema][params[0]][prefix]) {
+        const err = new Error('duplicate');
+        err.code = '23505';
+        throw err;
+      }
+      stockSequences[schema][params[0]][prefix] = params[2] ?? 2;
+      return { rows: [] };
+    }
+
+    if (compact.includes('UPDATE') && compact.includes('.inventory_stock_sequences')) {
+      const tenantId = params[0];
+      const prefix = params[1];
+      const bucket = stockSequences[schema]?.[tenantId];
+      const assigned = bucket?.[prefix];
+      if (!assigned) return { rows: [] };
+      bucket[prefix] = assigned + 1;
+      return { rows: [{ n: assigned }] };
     }
 
     if (compact.includes('DELETE FROM') && compact.includes('.inventory_categories')) {
@@ -91,6 +116,24 @@ function makePool() {
 
     if (compact.includes('FROM') && compact.includes('.inventory_categories')) {
       const list = categories[schema] || [];
+      if (compact.includes('SELECT stock_prefix FROM')) {
+        const hit = list.find(
+          (c) =>
+            c.tenant_id === params[0] && String(c.name).toLowerCase() === String(params[1]).toLowerCase()
+        );
+        return { rows: hit ? [{ stock_prefix: hit.stock_prefix }] : [] };
+      }
+      if (compact.includes('stock_prefix IS NOT NULL') && compact.includes('lower(stock_prefix)')) {
+        const exceptId = params[2];
+        const hit = list.find(
+          (c) =>
+            c.tenant_id === params[0] &&
+            c.stock_prefix &&
+            String(c.stock_prefix).toLowerCase() === String(params[1]).toLowerCase() &&
+            (!exceptId || c.id !== exceptId)
+        );
+        return { rows: hit ? [{ id: hit.id, name: hit.name }] : [] };
+      }
       if (compact.includes('lower(name)')) {
         const hit = list.find(
           (c) =>
@@ -123,6 +166,30 @@ function makePool() {
 
     if (compact.includes('UPDATE') && compact.includes('.inventory_categories')) {
       const list = categories[schema] || [];
+      if (compact.includes('stock_prefix = $3') && compact.includes('WHERE tenant_id = $1 AND name = $2')) {
+        const row = list.find((c) => c.tenant_id === params[0] && c.name === params[1]);
+        if (row && row.stock_prefix == null) row.stock_prefix = params[2];
+        return { rows: [] };
+      }
+      if (compact.includes('lower(name) = lower($2)') && compact.includes('stock_prefix = $3')) {
+        const row = list.find(
+          (c) =>
+            c.tenant_id === params[0] &&
+            String(c.name).toLowerCase() === String(params[1]).toLowerCase()
+        );
+        if (row) row.stock_prefix = params[2];
+        return { rows: [] };
+      }
+      if (compact.includes('stock_prefix = NULL')) {
+        const row = list.find((c) => c.id === params[0] && c.tenant_id === params[1]);
+        if (row) row.stock_prefix = null;
+        return { rows: row ? [row] : [] };
+      }
+      if (compact.includes('stock_prefix = $3') && compact.includes('WHERE id =')) {
+        const row = list.find((c) => c.id === params[0] && c.tenant_id === params[1]);
+        if (row) row.stock_prefix = params[2];
+        return { rows: row ? [row] : [] };
+      }
       const row = list.find((c) => c.id === params[0] && c.tenant_id === params[1]);
       if (!row) return { rows: [] };
       const next = params[2];
@@ -217,6 +284,12 @@ function makePool() {
       return { rows: hit ? [{ id: hit.id, name: hit.name }] : [] };
     }
 
+    if (compact.includes('FROM') && compact.includes('.inventory_skus') && compact.includes('SELECT id, category')) {
+      const list = skus[schema] || [];
+      const hit = list.find((s) => s.id === params[0] && s.tenant_id === params[1]);
+      return { rows: hit ? [{ id: hit.id, category: hit.category }] : [] };
+    }
+
     if (compact.includes('FROM') && compact.includes('.inventory_skus') && compact.includes('SELECT id FROM')) {
       const list = skus[schema] || [];
       const hit = list.find((s) => s.id === params[0] && s.tenant_id === params[1]);
@@ -236,9 +309,10 @@ function makePool() {
         id: randomUUID(),
         sku_id: params[1],
         serial_number: params[2],
-        nickname: params[3],
+        stock_code: params[3],
+        nickname: params[4],
         status: 'active',
-        notes: params[4],
+        notes: params[5],
         created_at: '2026-09-11T00:00:00.000Z',
         tenant_id: params[0],
       };
@@ -256,14 +330,32 @@ function makePool() {
       const list = units[schema] || [];
       if (compact.includes('WHERE id =')) {
         const hit = list.find((u) => u.id === params[0] && u.tenant_id === params[1] && u.status === 'active');
-        return { rows: hit ? [{ id: hit.id, sku_id: hit.sku_id, serial_number: hit.serial_number }] : [] };
+        return {
+          rows: hit
+            ? [
+                {
+                  id: hit.id,
+                  sku_id: hit.sku_id,
+                  serial_number: hit.serial_number,
+                  stock_code: hit.stock_code,
+                },
+              ]
+            : [],
+        };
       }
       const skuId = params[0];
       return {
         rows: list
           .filter((u) => u.sku_id === skuId && u.tenant_id === params[1] && u.status === 'active')
-          .sort((a, b) => a.serial_number.localeCompare(b.serial_number))
-          .map((u) => ({ id: u.id, sku_id: u.sku_id, serial_number: u.serial_number })),
+          .sort((a, b) =>
+            String(a.stock_code || a.serial_number).localeCompare(String(b.stock_code || b.serial_number))
+          )
+          .map((u) => ({
+            id: u.id,
+            sku_id: u.sku_id,
+            serial_number: u.serial_number,
+            stock_code: u.stock_code,
+          })),
       };
     }
 
@@ -441,6 +533,7 @@ function makePool() {
             id: row.id,
             sku_id: row.sku_id,
             serial_number: row.serial_number,
+            stock_code: row.stock_code,
             nickname: row.nickname,
             status: row.status,
             notes: row.notes,
@@ -1144,5 +1237,57 @@ describe('retire and rotate serials', () => {
     const skus = await fetch(`${urlA}/api/v1/quotes/inventory/skus`);
     const row = (await skus.json()).skus.find((s) => s.id === skuId);
     assert.equal(row.category, 'Microphones');
+  });
+
+  it('assigns sequential unit stock codes from the category prefix', async () => {
+    await fetch(`${urlA}/api/v1/quotes/inventory/categories`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Track codes A', stock_prefix: 'ZZA' }),
+    });
+    await fetch(`${urlA}/api/v1/quotes/inventory/categories`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Track codes B', stock_prefix: 'ZZB' }),
+    });
+    const skuRes = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'SM58', category: 'Track codes A', daily_rate: 25 }),
+    });
+    const skuId = (await skuRes.json()).sku.id;
+
+    const u1 = await fetch(`${urlA}/api/v1/quotes/inventory/skus/${skuId}/units`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    assert.equal(u1.status, 201);
+    const first = (await u1.json()).unit;
+    assert.equal(first.stock_code, 'ZZA-0001');
+    assert.equal(first.serial_number, 'ZZA-0001');
+
+    const u2 = await fetch(`${urlA}/api/v1/quotes/inventory/skus/${skuId}/units`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serial_number: 'SHURE-ABC' }),
+    });
+    assert.equal(u2.status, 201);
+    const second = (await u2.json()).unit;
+    assert.equal(second.stock_code, 'ZZA-0002');
+    assert.equal(second.serial_number, 'SHURE-ABC');
+
+    const spkSku = await fetch(`${urlA}/api/v1/quotes/inventory/skus`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'K12', category: 'Track codes B', daily_rate: 40 }),
+    });
+    const spkId = (await spkSku.json()).sku.id;
+    const spkUnit = await fetch(`${urlA}/api/v1/quotes/inventory/skus/${spkId}/units`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    assert.equal((await spkUnit.json()).unit.stock_code, 'ZZB-0001');
   });
 });

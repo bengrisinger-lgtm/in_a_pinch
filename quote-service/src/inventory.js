@@ -13,6 +13,12 @@ import {
   HOLD_TTL_CART_MINUTES,
 } from './schema.js';
 import { wrapWithTenant, withTenantTransaction } from './pool.js';
+import {
+  allocateStockCode,
+  assertUniqueCategoryPrefix,
+  categoryStockPrefix,
+  normalizeStockPrefix,
+} from './stockCodes.js';
 import { actorUserId } from './auth.js';
 import {
   clipName,
@@ -147,10 +153,25 @@ export function inventoryRoutes(ctx) {
     }
     try {
       const { tenantId, schema, db } = await scoped(pool, req);
-      const saved = await upsertCategory(db, schema, tenantId, name);
+      if (Object.prototype.hasOwnProperty.call(req.body || {}, 'stock_prefix')) {
+        await assertUniqueCategoryPrefix(db, schema, tenantId, req.body.stock_prefix, null);
+      }
+      const saved = await upsertCategory(db, schema, tenantId, name, req.body?.stock_prefix);
+      if (req.body?.stock_prefix != null && String(req.body.stock_prefix).trim() !== '') {
+        const p = normalizeStockPrefix(req.body.stock_prefix);
+        await db.query(
+          `UPDATE ${schema}.inventory_categories
+              SET stock_prefix = $3
+            WHERE tenant_id = $1 AND lower(name) = lower($2)`,
+          [tenantId, saved, p]
+        );
+      }
       const categories = await listCategories(db, schema, tenantId);
       res.status(201).json({ name: saved, categories });
     } catch (err) {
+      if (err.status === 400 || err.status === 409) {
+        return res.status(err.status).json({ error: err.message });
+      }
       req.log?.error?.({ err }, 'category create failed');
       res.status(500).json({ error: 'Failed to create category' });
     }
@@ -162,8 +183,9 @@ export function inventoryRoutes(ctx) {
       return res.status(400).json({ error: 'categoryId must be a UUID' });
     }
     const name = clipName(req.body?.name);
-    if (!name) {
-      return res.status(400).json({ error: 'name is required' });
+    const hasPrefix = Object.prototype.hasOwnProperty.call(req.body || {}, 'stock_prefix');
+    if (!name && !hasPrefix) {
+      return res.status(400).json({ error: 'name or stock_prefix is required' });
     }
     try {
       const { tenantId, schema, db } = await scoped(pool, req);
@@ -176,30 +198,54 @@ export function inventoryRoutes(ctx) {
         return res.status(404).json({ error: 'Category not found' });
       }
       const oldName = current.rows[0].name;
-      try {
-        await db.query(
-          `UPDATE ${schema}.inventory_categories
-              SET name = $3
-            WHERE id = $1 AND tenant_id = $2`,
-          [categoryId, tenantId, name]
-        );
-      } catch (err) {
-        if (err?.code === '23505') {
-          return res.status(409).json({ error: 'A category with that name already exists' });
+      if (hasPrefix) {
+        const raw = req.body.stock_prefix;
+        if (raw == null || String(raw).trim() === '') {
+          await db.query(
+            `UPDATE ${schema}.inventory_categories
+                SET stock_prefix = NULL
+              WHERE id = $1 AND tenant_id = $2`,
+            [categoryId, tenantId]
+          );
+        } else {
+          const p = await assertUniqueCategoryPrefix(db, schema, tenantId, raw, categoryId);
+          await db.query(
+            `UPDATE ${schema}.inventory_categories
+                SET stock_prefix = $3
+              WHERE id = $1 AND tenant_id = $2`,
+            [categoryId, tenantId, p]
+          );
         }
-        throw err;
       }
-      await db.query(
-        `UPDATE ${schema}.inventory_skus
-            SET category = $3, updated_at = now()
-          WHERE tenant_id = $1 AND category = $2`,
-        [tenantId, oldName, name]
-      );
+      if (name) {
+        try {
+          await db.query(
+            `UPDATE ${schema}.inventory_categories
+                SET name = $3
+              WHERE id = $1 AND tenant_id = $2`,
+            [categoryId, tenantId, name]
+          );
+        } catch (err) {
+          if (err?.code === '23505') {
+            return res.status(409).json({ error: 'A category with that name already exists' });
+          }
+          throw err;
+        }
+        await db.query(
+          `UPDATE ${schema}.inventory_skus
+              SET category = $3, updated_at = now()
+            WHERE tenant_id = $1 AND category = $2`,
+          [tenantId, oldName, name]
+        );
+      }
       const categories = await listCategories(db, schema, tenantId);
-      res.json({ name, categories });
+      res.json({ name: name || oldName, categories });
     } catch (err) {
-      req.log?.error?.({ err }, 'category rename failed');
-      res.status(500).json({ error: 'Failed to rename category' });
+      if (err.status === 400 || err.status === 409) {
+        return res.status(err.status).json({ error: err.message });
+      }
+      req.log?.error?.({ err }, 'category patch failed');
+      res.status(500).json({ error: 'Failed to update category' });
     }
   });
 
@@ -343,36 +389,48 @@ export function inventoryRoutes(ctx) {
     if (!UUID_RE.test(skuId)) {
       return res.status(400).json({ error: 'skuId must be a UUID' });
     }
-    const serial = clip(req.body?.serial_number, SERIAL_MAX);
-    if (!serial) {
-      return res.status(400).json({ error: 'serial_number is required' });
-    }
+    const mfgSerial = clip(req.body?.serial_number, SERIAL_MAX);
     try {
       const { schema, db } = await scoped(pool, req);
       const sku = await db.query(
-        `SELECT id FROM ${schema}.inventory_skus WHERE id = $1 AND tenant_id = $2`,
+        `SELECT id, category FROM ${schema}.inventory_skus WHERE id = $1 AND tenant_id = $2`,
         [skuId, tenantId]
       );
       if (!sku.rows[0]) {
         return res.status(404).json({ error: 'SKU not found' });
       }
-      const { rows } = await db.query(
-        `INSERT INTO ${schema}.inventory_units
-           (tenant_id, sku_id, serial_number, nickname, notes)
-         VALUES ($1, $2, $3, $4, $5)
-         RETURNING id, sku_id, serial_number, nickname, status, notes, created_at`,
-        [
-          tenantId,
-          skuId,
-          serial,
-          clip(req.body?.nickname, NAME_MAX),
-          clip(req.body?.notes, TEXT_MAX),
-        ]
-      );
-      res.status(201).json({ unit: rows[0], schema });
+      const prefix = await categoryStockPrefix(db, schema, tenantId, sku.rows[0].category);
+      if (!prefix) {
+        return res.status(400).json({
+          error:
+            'Set a 3-character stock prefix on this SKU’s category before adding units (Categories section).',
+        });
+      }
+      const nickname = clip(req.body?.nickname, NAME_MAX);
+      const notes = clip(req.body?.notes, TEXT_MAX);
+      const unit = await withTenantTransaction(pool, tenantId, async (client) => {
+        const stockCode = await allocateStockCode(client, schema, tenantId, prefix);
+        const serialNumber = mfgSerial || stockCode;
+        const { rows } = await client.query(
+          `INSERT INTO ${schema}.inventory_units
+             (tenant_id, sku_id, serial_number, stock_code, nickname, notes)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id, sku_id, serial_number, stock_code, nickname, status, notes, created_at`,
+          [tenantId, skuId, serialNumber, stockCode, nickname, notes]
+        );
+        return rows[0];
+      });
+      res.status(201).json({ unit, schema });
     } catch (err) {
       if (err && err.code === '23505') {
-        return res.status(409).json({ error: 'serial_number already exists for this SKU' });
+        return res.status(409).json({
+          error: mfgSerial
+            ? 'serial_number already exists for this SKU'
+            : 'stock code collision; retry',
+        });
+      }
+      if (err.status === 400) {
+        return res.status(400).json({ error: err.message });
       }
       req.log?.error?.({ err }, 'unit create failed');
       res.status(500).json({ error: 'Failed to create unit' });
@@ -388,10 +446,10 @@ export function inventoryRoutes(ctx) {
     try {
       const { schema, db } = await scoped(pool, req);
       const { rows } = await db.query(
-        `SELECT id, sku_id, serial_number, nickname, status, notes, created_at
+        `SELECT id, sku_id, serial_number, stock_code, nickname, status, notes, created_at
            FROM ${schema}.inventory_units
           WHERE sku_id = $1 AND tenant_id = $2
-          ORDER BY serial_number`,
+          ORDER BY COALESCE(stock_code, serial_number)`,
         [skuId, tenantId]
       );
       res.json({ units: rows, schema });
@@ -569,7 +627,7 @@ export function inventoryRoutes(ctx) {
         `UPDATE ${schema}.inventory_units
             SET ${setParts.join(', ')}
           WHERE id = $1 AND sku_id = $2 AND tenant_id = $3
-          RETURNING id, sku_id, serial_number, nickname, status, notes, created_at`,
+          RETURNING id, sku_id, serial_number, stock_code, nickname, status, notes, created_at`,
         params
       );
       if (!rows[0]) {
@@ -766,7 +824,7 @@ export function inventoryRoutes(ctx) {
         let targets = [];
         if (unitId) {
           const locked = await client.query(
-            `SELECT id, sku_id, serial_number FROM ${schema}.inventory_units
+            `SELECT id, sku_id, serial_number, stock_code FROM ${schema}.inventory_units
               WHERE id = $1 AND tenant_id = $2 AND status = 'active'
               FOR UPDATE`,
             [unitId, tenantId]
@@ -779,9 +837,9 @@ export function inventoryRoutes(ctx) {
           targets = [locked.rows[0]];
         } else {
           const locked = await client.query(
-            `SELECT id, sku_id, serial_number FROM ${schema}.inventory_units
+            `SELECT id, sku_id, serial_number, stock_code FROM ${schema}.inventory_units
               WHERE sku_id = $1 AND tenant_id = $2 AND status = 'active'
-              ORDER BY serial_number
+              ORDER BY COALESCE(stock_code, serial_number)
               FOR UPDATE`,
             [skuId, tenantId]
           );
@@ -845,7 +903,10 @@ export function inventoryRoutes(ctx) {
               actorUserId(req),
             ]
           );
-          holds.push({ ...inserted.rows[0], serial_number: unit.serial_number });
+          holds.push({
+            ...inserted.rows[0],
+            serial_number: unit.stock_code || unit.serial_number,
+          });
         }
         return holds;
       });

@@ -7,7 +7,8 @@
 #
 # Usage:
 #   cd micro-applications\in-a-pinch\quote-service
-#   .\deploy.ps1 -TenantId "<uuid from operator console>"
+#   .\deploy.ps1
+# Default TenantId is In A Pinch (cadel-7414). Override only for a different tenant spoke.
 #
 # Optional:
 #   -AllowedOrigins "https://staff.example.com,https://api.example.com"
@@ -15,9 +16,9 @@
 #   -SkipRegister   (image only; no POST /auth/services)
 
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$TenantId,
+    [string]$TenantId = "987bcdaf-320d-46bf-bfb3-4bdcdffe1de1",
 
+    [string]$TenantSlug = "cadel-7414",
     [string]$AllowedOrigins = $env:QUOTE_ALLOWED_ORIGINS,
     [string]$ServiceName = "quote-service",
     [string]$RegistryName = "quotes",
@@ -212,8 +213,13 @@ try {
 $envYamlPath = Join-Path $staging "env.yaml"
 $consoleUrlLine = if ($CONSOLE_SERVICE_URL) { "CONSOLE_SERVICE_URL: `"$CONSOLE_SERVICE_URL`"" } else { "" }
 $integrationsUrlLine = if ($INTEGRATIONS_SERVICE_URL) { "INTEGRATIONS_SERVICE_URL: `"$INTEGRATIONS_SERVICE_URL`"" } else { "" }
-$catalogBuckets = if ($env:CATALOG_MEDIA_BUCKETS) { $env:CATALOG_MEDIA_BUCKETS.Trim() } else { '' }
-$catalogBucketsLine = if ($catalogBuckets) { "CATALOG_MEDIA_BUCKETS: `"$catalogBuckets`"" } else { "" }
+$defaultCatalogBuckets = @(
+    "${PROJECT}-ta-${TenantSlug}-hub-app"
+    "${PROJECT}-ta-${TenantSlug}-coming-soon-app"
+) -join ","
+$catalogBuckets = if ($env:CATALOG_MEDIA_BUCKETS) { $env:CATALOG_MEDIA_BUCKETS.Trim() } else { $defaultCatalogBuckets }
+$catalogBucketsLine = "CATALOG_MEDIA_BUCKETS: `"$catalogBuckets`""
+Write-Host "  CATALOG_MEDIA_BUCKETS: $catalogBuckets" -ForegroundColor DarkGray
 Write-Utf8NoBom $envYamlPath @"
 DB_USER: "$SQL_USER"
 DB_NAME: "$SQL_DATABASE"
@@ -361,6 +367,7 @@ if ($SkipRegister) {
 Write-Host "`n=== quote-service deploy complete ===" -ForegroundColor Green
 Write-Host "Cloud Run:     $QUOTE_URL"
 Write-Host "Gateway route: https://api.$baseDomain$PathPrefix  (after gateway poll ~60s)"
+Write-Host "TENANT_ID lock: $TenantId  (must match operator console UUID for tenant slug $TenantSlug — mismatch causes apex 'Wrong tenant for this service')" -ForegroundColor Yellow
 Write-Host ""
 Write-Host "HMAC on staff calls through api.* will 401 until api-gateway is cut over" -ForegroundColor Yellow
 Write-Host "to the minted secret (after LC scan/loa verify). Do not deploy api-gateway from this script." -ForegroundColor Yellow

@@ -1,3 +1,5 @@
+import { isWrongTenantApiError, recoverConsumerTenantSession } from './kit';
+
 export type Band = 'none' | 'low' | 'good';
 
 export type Sku = {
@@ -17,6 +19,7 @@ export type InventoryUnit = {
   id: string;
   sku_id: string;
   serial_number: string;
+  stock_code?: string | null;
   nickname: string | null;
   status: string;
 };
@@ -56,7 +59,7 @@ function gatewayUrl(): string {
 
 const BASE = () => `${gatewayUrl()}/api/v1/quotes/inventory`;
 
-async function invFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+async function invFetch<T>(path: string, options: RequestInit = {}, tenantRetried = false): Promise<T> {
   const res = await fetch(`${BASE()}${path}`, {
     ...options,
     credentials: 'include',
@@ -69,7 +72,15 @@ async function invFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new InventoryApiError(res.status, body.error || `HTTP ${res.status}`);
+    const message = body.error || `HTTP ${res.status}`;
+    if (
+      !tenantRetried &&
+      isWrongTenantApiError(res.status, message) &&
+      (await recoverConsumerTenantSession())
+    ) {
+      return invFetch(path, options, true);
+    }
+    throw new InventoryApiError(res.status, message);
   }
   return res.json() as Promise<T>;
 }
@@ -77,6 +88,7 @@ async function invFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
 export type InventoryCategory = {
   id: string;
   name: string;
+  stock_prefix?: string | null;
   created_at?: string;
 };
 
@@ -84,10 +96,23 @@ export function listCategories() {
   return invFetch<{ categories: InventoryCategory[] }>('/categories');
 }
 
-export function createCategory(name: string) {
+export function createCategory(name: string, stockPrefix?: string) {
   return invFetch<{ name: string; categories: InventoryCategory[] }>('/categories', {
     method: 'POST',
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({
+      name,
+      ...(stockPrefix?.trim() ? { stock_prefix: stockPrefix.trim() } : {}),
+    }),
+  });
+}
+
+export function patchCategory(
+  categoryId: string,
+  input: { name?: string; stock_prefix?: string | null }
+) {
+  return invFetch<{ name: string; categories: InventoryCategory[] }>(`/categories/${categoryId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
   });
 }
 
@@ -130,10 +155,10 @@ export function listUnits(skuId: string) {
   return invFetch<{ units: InventoryUnit[] }>(`/skus/${skuId}/units`);
 }
 
-export function createUnit(skuId: string, input: { serial_number: string; nickname?: string }) {
+export function createUnit(skuId: string, input?: { serial_number?: string; nickname?: string }) {
   return invFetch<{ unit: InventoryUnit }>(`/skus/${skuId}/units`, {
     method: 'POST',
-    body: JSON.stringify(input),
+    body: JSON.stringify(input || {}),
   });
 }
 

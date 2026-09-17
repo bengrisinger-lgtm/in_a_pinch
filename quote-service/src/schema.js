@@ -126,6 +126,7 @@ const TABLES = [
       tenant_id UUID NOT NULL,
       sku_id UUID NOT NULL,
       serial_number TEXT NOT NULL,
+      stock_code TEXT,
       nickname TEXT,
       status TEXT NOT NULL DEFAULT 'active',
       notes TEXT,
@@ -139,7 +140,17 @@ const TABLES = [
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       tenant_id UUID NOT NULL,
       name TEXT NOT NULL,
+      stock_prefix TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    `,
+  },
+  {
+    name: 'inventory_stock_sequences',
+    ddl: `
+      tenant_id UUID NOT NULL,
+      prefix TEXT NOT NULL,
+      next_number INT NOT NULL DEFAULT 2,
+      PRIMARY KEY (tenant_id, prefix)
     `,
   },
   {
@@ -288,6 +299,22 @@ export async function ensureQuoteTables(db, tenantId) {
     `UPDATE ${schema}.inventory_skus
         SET category = 'Microphones', updated_at = now()
       WHERE category = 'Microphone'`
+  );
+  await db.query(
+    `ALTER TABLE ${schema}.inventory_categories ADD COLUMN IF NOT EXISTS stock_prefix TEXT`
+  );
+  await db.query(
+    `ALTER TABLE ${schema}.inventory_units ADD COLUMN IF NOT EXISTS stock_code TEXT`
+  );
+  await db.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS inventory_units_stock_code_uidx
+        ON ${schema}.inventory_units (tenant_id, stock_code)
+      WHERE stock_code IS NOT NULL`
+  );
+  await db.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS inventory_categories_stock_prefix_uidx
+        ON ${schema}.inventory_categories (tenant_id, lower(stock_prefix))
+      WHERE stock_prefix IS NOT NULL`
   );
   await db.query(
     `CREATE INDEX IF NOT EXISTS inventory_units_sku_idx ON ${schema}.inventory_units (sku_id)`

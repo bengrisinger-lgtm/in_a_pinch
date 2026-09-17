@@ -71,6 +71,7 @@ export default function CatalogPage({ email, staff, consumer = false, cart, setC
   const [calendarSku, setCalendarSku] = useState<Sku | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [localEpoch, setLocalEpoch] = useState(0);
+  const [photoPreview, setPhotoPreview] = useState<{ src: string; title: string } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -354,11 +355,19 @@ export default function CatalogPage({ email, staff, consumer = false, cart, setC
             const photo = catalogImageSrc(sku.image_url);
             return (
               <article key={sku.id} className="product">
-                {photo ? (
-                  <img className="product-photo" src={photo} alt="" />
-                ) : (
-                  <div className="product-art">{sku.category || 'Gear'}</div>
-                )}
+                <div className={`product-art${photo ? ' product-art--has-thumb' : ''}`}>
+                  <span className="product-art-label">{sku.category || 'Gear'}</span>
+                  {photo ? (
+                    <button
+                      type="button"
+                      className="product-art-thumb-btn"
+                      aria-label={`View larger photo of ${sku.name}`}
+                      onClick={() => setPhotoPreview({ src: photo, title: sku.name })}
+                    >
+                      <img className="product-art-thumb" src={photo} alt="" />
+                    </button>
+                  ) : null}
+                </div>
                 <div className="product-body">
                   <div className="tag">{sku.category || 'Uncategorized'}</div>
                   <h3>{sku.name}</h3>
@@ -438,6 +447,27 @@ export default function CatalogPage({ email, staff, consumer = false, cart, setC
           }}
           onPreview={(nextStart, nextEnd) => setPreview({ startsOn: nextStart, endsOn: nextEnd })}
         />
+      ) : null}
+
+      {photoPreview ? (
+        <div
+          className="confirm-backdrop photo-lightbox-backdrop"
+          role="presentation"
+          onClick={() => setPhotoPreview(null)}
+        >
+          <div
+            className="photo-lightbox"
+            role="dialog"
+            aria-modal="true"
+            aria-label={photoPreview.title}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img src={photoPreview.src} alt={photoPreview.title} />
+            <button type="button" className="secondary" onClick={() => setPhotoPreview(null)}>
+              Close
+            </button>
+          </div>
+        </div>
       ) : null}
     </>
   );
