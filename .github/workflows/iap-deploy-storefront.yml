@@ -52,6 +52,9 @@ jobs:
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Verify symlfy-baas layout (logged every run)
+        run: bash scripts/verify-symlfy-baas-layout.sh "${GITHUB_WORKSPACE}/symlfy-baas"
+
       - name: Bootstrap platform SDK path
         run: |
           sudo mkdir -p /symlfy-baas
