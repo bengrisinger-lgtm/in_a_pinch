@@ -4,8 +4,47 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STOREFRONT="$ROOT/storefront"
-BAAS="${SYMLFY_BAAS_ROOT:-/symlfy-baas}"
-CONSOLE_APP="$BAAS/console-app"
+
+resolve_baas_root() {
+  if [[ -n "${SYMLFY_BAAS_ROOT:-}" && -d "$SYMLFY_BAAS_ROOT" ]]; then
+    printf '%s' "$SYMLFY_BAAS_ROOT"
+    return 0
+  fi
+  if [[ -n "${GITHUB_WORKSPACE:-}" && -d "${GITHUB_WORKSPACE}/symlfy-baas" ]]; then
+    printf '%s' "${GITHUB_WORKSPACE}/symlfy-baas"
+    return 0
+  fi
+  if [[ -d "$ROOT/symlfy-baas" ]]; then
+    printf '%s' "$ROOT/symlfy-baas"
+    return 0
+  fi
+  if [[ -d /symlfy-baas ]]; then
+    printf '%s' /symlfy-baas
+    return 0
+  fi
+  return 1
+}
+
+resolve_console_app() {
+  local baas="$1"
+  for candidate in "$baas/console-app" "$baas/syml-platform/console-app"; do
+    if [[ -f "$candidate/package.json" ]]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+BAAS="$(resolve_baas_root)" || {
+  echo "symlfy-baas checkout not found (set SYMLFY_BAAS_ROOT or run after Actions checkout)." >&2
+  exit 1
+}
+CONSOLE_APP="$(resolve_console_app "$BAAS")" || {
+  echo "console-app not found under $BAAS (expected console-app/ or syml-platform/console-app/)." >&2
+  echo "Uncheck build_console_overlay in the workflow, or push console-app to symlfy-baas on GitHub." >&2
+  exit 1
+}
 OVERLAY="$STOREFRONT/console-dist"
 THEME="$STOREFRONT/console-overlay/iap-console.css"
 
