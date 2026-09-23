@@ -114,18 +114,39 @@ test
 env.yaml
 IGNORE
 
-if ! gcloud secrets describe "$HMAC_SECRET_NAME" --project="$PROJECT" >/dev/null 2>&1; then
-  echo "=== bootstrap HMAC secret $HMAC_SECRET_NAME ==="
-  bootstrap="$(openssl rand -base64 32)"
-  printf '%s' "$bootstrap" | gcloud secrets create "$HMAC_SECRET_NAME" \
-    --project="$PROJECT" --data-file=- --replication-policy=automatic
+# Existence: use versions access (matches deploy-time need). describe/create need extra IAM
+# that WIF deploy SAs should not require when quote-service-hmac already exists from PC deploy.
+hmac_access_err=""
+if ! gcloud secrets versions access latest --secret="$HMAC_SECRET_NAME" --project="$PROJECT" >/dev/null 2>&1; then
+  hmac_access_err="$(gcloud secrets versions access latest --secret="$HMAC_SECRET_NAME" --project="$PROJECT" 2>&1)" || true
+  if echo "$hmac_access_err" | grep -qi PERMISSION_DENIED; then
+    echo "ERROR: deploy SA cannot read Secret Manager secret '$HMAC_SECRET_NAME'." >&2
+    echo "Grant roles/secretmanager.secretAccessor on that secret to the GitHub WIF deploy SA" >&2
+    echo "(iap-cloud-agent-deploy@securedbackend-production.iam.gserviceaccount.com)." >&2
+    exit 1
+  fi
+  if [[ "${QUOTE_ALLOW_HMAC_CREATE:-0}" == "1" ]]; then
+    echo "=== bootstrap HMAC secret $HMAC_SECRET_NAME (QUOTE_ALLOW_HMAC_CREATE=1) ==="
+    bootstrap="$(openssl rand -base64 32)"
+    printf '%s' "$bootstrap" | gcloud secrets create "$HMAC_SECRET_NAME" \
+      --project="$PROJECT" --data-file=- --replication-policy=automatic
+  else
+    echo "ERROR: Secret '$HMAC_SECRET_NAME' is missing or has no versions." >&2
+    echo "One-time from an admin account (PC deploy.ps1), or set QUOTE_ALLOW_HMAC_CREATE=1 only" >&2
+    echo "when the deploy principal has secretmanager.secrets.create." >&2
+    exit 1
+  fi
+else
+  echo "OK  HMAC secret $HMAC_SECRET_NAME (latest version readable)"
 fi
 
-gcloud secrets add-iam-policy-binding "$HMAC_SECRET_NAME" \
-  --project="$PROJECT" \
-  --member "serviceAccount:$SERVICE_ACCOUNT" \
-  --role "roles/secretmanager.secretAccessor" \
-  --quiet 2>/dev/null || true
+if [[ "${QUOTE_SKIP_SECRET_IAM:-1}" != "1" ]]; then
+  gcloud secrets add-iam-policy-binding "$HMAC_SECRET_NAME" \
+    --project="$PROJECT" \
+    --member "serviceAccount:$SERVICE_ACCOUNT" \
+    --role "roles/secretmanager.secretAccessor" \
+    --quiet 2>/dev/null || true
+fi
 
 CONSOLE_SERVICE_URL=""
 INTEGRATIONS_SERVICE_URL=""
@@ -228,7 +249,12 @@ hmac_secret="$(echo "$raw" | jq -r '.hmac_secret // empty')"
 if [[ -n "$hmac_secret" ]]; then
   hmac_tmp="$(mktemp)"
   printf '%s' "$hmac_secret" >"$hmac_tmp"
-  gcloud secrets versions add "$HMAC_SECRET_NAME" --project="$PROJECT" --data-file="$hmac_tmp"
+  if ! gcloud secrets versions add "$HMAC_SECRET_NAME" --project="$PROJECT" --data-file="$hmac_tmp"; then
+    rm -f "$hmac_tmp"
+    echo "ERROR: could not add HMAC version — grant roles/secretmanager.secretVersionManager on" >&2
+    echo "'$HMAC_SECRET_NAME' to the deploy SA, or run register from PC deploy.ps1 once." >&2
+    exit 1
+  fi
   rm -f "$hmac_tmp"
   gcloud run services update "$SERVICE_NAME" \
     --project="$PROJECT" --region="$REGION" \
