@@ -40,6 +40,9 @@ jobs:
       - name: Verify symlfy-baas layout
         run: bash scripts/verify-symlfy-baas-layout.sh "${GITHUB_WORKSPACE}/symlfy-baas"
 
+      - name: Build client-sdk for browser (console-app may import kit)
+        run: bash scripts/build-client-sdk-for-iap.sh symlfy-baas/syml-platform/client-sdk
+
       - name: Build console overlay
         env:
           SYMLFY_BAAS_ROOT: ${{ github.workspace }}/symlfy-baas

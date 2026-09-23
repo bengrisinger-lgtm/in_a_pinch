@@ -49,13 +49,13 @@ jobs:
       - name: Verify symlfy-baas layout (logged every run)
         run: bash scripts/verify-symlfy-baas-layout.sh "${GITHUB_WORKSPACE}/symlfy-baas"
 
-      - name: Bootstrap platform SDK path
+      - name: Build client-sdk for browser (IAP Vite)
+        run: bash scripts/build-client-sdk-for-iap.sh symlfy-baas/syml-platform/client-sdk
+
+      - name: Link SDK for monorepo-style imports
         run: |
           sudo mkdir -p /symlfy-baas
           sudo ln -sfn "${GITHUB_WORKSPACE}/symlfy-baas" /symlfy-baas
-          cd symlfy-baas/syml-platform/client-sdk
-          npm install
-          npm run build
 
       - name: Build storefront
         run: |
