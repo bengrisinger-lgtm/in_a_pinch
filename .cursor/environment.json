@@ -6,7 +6,9 @@
   },
   "user": "node",
   "install": "bash scripts/cloud-agent-install.sh",
-  "repositoryDependencies": [],
+  "repositoryDependencies": [
+    "github.com/bengrisinger-lgtm/symlfy-baas"
+  ],
   "egressAllowlist": [
     "registry-1.docker.io",
     "auth.docker.io",
