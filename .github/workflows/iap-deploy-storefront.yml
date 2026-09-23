@@ -57,7 +57,7 @@ jobs:
           sudo mkdir -p /symlfy-baas
           sudo ln -sfn "${GITHUB_WORKSPACE}/symlfy-baas" /symlfy-baas
           cd symlfy-baas/syml-platform/client-sdk
-          npm ci
+          npm install
           npm run build
 
       - name: Optional console overlay
