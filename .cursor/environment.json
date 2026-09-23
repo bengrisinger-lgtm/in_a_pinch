@@ -1,0 +1,24 @@
+{
+  "name": "In A Pinch — deploy",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+  "user": "node",
+  "install": "bash scripts/cloud-agent-install.sh",
+  "repositoryDependencies": [
+    "github.com/bengrisinger-lgtm/symlfy-baas"
+  ],
+  "egressAllowlist": [
+    "registry-1.docker.io",
+    "auth.docker.io",
+    "storage.googleapis.com",
+    "www.googleapis.com",
+    "oauth2.googleapis.com",
+    "cloud.google.com",
+    "artifactregistry.googleapis.com",
+    "cloudbuild.googleapis.com",
+    "run.googleapis.com",
+    "secretmanager.googleapis.com"
+  ]
+}

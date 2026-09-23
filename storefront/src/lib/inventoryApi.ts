@@ -1,4 +1,4 @@
-import { isWrongTenantApiError, recoverConsumerTenantSession } from './kit';
+import { isWrongTenantApiError, recoverConsumerTenantSession, tenantQuotesFetch } from './kit';
 
 export type Band = 'none' | 'low' | 'good';
 
@@ -51,25 +51,8 @@ export class InventoryApiError extends Error {
   }
 }
 
-function gatewayUrl(): string {
-  const url = import.meta.env.VITE_API_GATEWAY_URL;
-  if (!url) throw new Error('VITE_API_GATEWAY_URL is required');
-  return url.replace(/\/$/, '');
-}
-
-const BASE = () => `${gatewayUrl()}/api/v1/quotes/inventory`;
-
 async function invFetch<T>(path: string, options: RequestInit = {}, tenantRetried = false): Promise<T> {
-  const res = await fetch(`${BASE()}${path}`, {
-    ...options,
-    credentials: 'include',
-    cache: 'no-store',
-    headers: {
-      Accept: 'application/json',
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-      ...(options.headers || {}),
-    },
-  });
+  const res = await tenantQuotesFetch(`/inventory${path}`, { ...options, cache: 'no-store' });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     const message = body.error || `HTTP ${res.status}`;

@@ -1,0 +1,96 @@
+# Deploy IAP storefront to GCS (hub + apex) via Workload Identity Federation — no SA JSON keys.
+name: Deploy IAP storefront
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: What to upload
+        required: true
+        default: both
+        type: choice
+        options:
+          - both
+          - hub
+          - apex
+      build_console_overlay:
+        description: Rebuild hub /console/ overlay (needs symlfy-baas console-app)
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT: securedbackend-production
+  GCP_WIF_PROVIDER: projects/248381849073/locations/global/workloadIdentityPools/iap-cloud-agent-1/providers/github
+  GCP_SERVICE_ACCOUNT: iap-cloud-agent-deploy@securedbackend-production.iam.gserviceaccount.com
+  IAP_TENANT_SLUG: cadel-7414
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout in_a_pinch
+        uses: actions/checkout@v4
+
+      - name: Checkout symlfy-baas (SDK)
+        uses: actions/checkout@v4
+        with:
+          repository: bengrisinger-lgtm/symlfy-baas
+          path: symlfy-baas
+          token: ${{ secrets.SYMLFY_BAAS_GITHUB_TOKEN }}
+
+      - name: Authenticate to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Bootstrap platform SDK path
+        run: |
+          sudo mkdir -p /symlfy-baas
+          sudo ln -sfn "${GITHUB_WORKSPACE}/symlfy-baas" /symlfy-baas
+          cd symlfy-baas/syml-platform/client-sdk
+          npm ci
+          npm run build
+
+      - name: Optional console overlay
+        if: inputs.build_console_overlay == true
+        env:
+          VITE_API_GATEWAY_URL: https://api.inapinchav.com
+          VITE_AUTH_URL: https://auth.inapinchav.com
+          VITE_CONSOLE_URL: https://hub.inapinchav.com/console/index.html
+          VITE_BRAND_NAME: In a Pinch AV
+          VITE_SHELL_LINKS: '[{"label":"Hub","href":"/#home"},{"label":"Rentals","href":"/#rentals"},{"label":"Orders","href":"/#orders"},{"label":"Stock","href":"/#stock"},{"label":"Vault","href":"/console/index.html?as=tenant"}]'
+        run: bash scripts/iap-build-console-overlay.sh
+
+      - name: Build storefront
+        working-directory: storefront
+        run: |
+          npm ci
+          npm test
+          npm run build
+
+      - name: Upload hub bucket
+        if: inputs.target == 'hub' || inputs.target == 'both'
+        run: |
+          BUCKET="gs://${GCP_PROJECT}-ta-${IAP_TENANT_SLUG}-hub-app"
+          gcloud storage rsync --recursive --delete-unmatched-destination-objects \
+            storefront/dist "$BUCKET" --exclude='^catalog-media/.*'
+          if [[ -f storefront/console-dist/index.html ]]; then
+            gcloud storage rsync --recursive --delete-unmatched-destination-objects \
+              storefront/console-dist "$BUCKET/console"
+          fi
+
+      - name: Upload apex bucket
+        if: inputs.target == 'apex' || inputs.target == 'both'
+        run: |
+          BUCKET="gs://${GCP_PROJECT}-ta-${IAP_TENANT_SLUG}-coming-soon-app"
+          gcloud storage rsync --recursive --delete-unmatched-destination-objects \
+            storefront/dist "$BUCKET" --exclude='^catalog-media/.*'

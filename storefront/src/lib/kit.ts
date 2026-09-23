@@ -52,6 +52,70 @@ function gatewayFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Res
   return globalThis.fetch.bind(globalThis)(input, { ...init, cache: 'no-store' });
 }
 
+/** Headers for browser calls to tenant APIs (quotes/inventory). Matches kit transport. */
+export function tenantApiHeaders(extra?: HeadersInit, jsonBody?: boolean): HeadersInit {
+  const headers = new Headers(extra);
+  if (!headers.has('Accept')) headers.set('Accept', 'application/json');
+  if (jsonBody && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  const clientId = import.meta.env.VITE_SYMLAVAULT_CLIENT;
+  if (typeof clientId === 'string' && clientId.trim() && !headers.has('X-SymlaVault-Client')) {
+    headers.set('X-SymlaVault-Client', clientId.trim());
+  }
+  return headers;
+}
+
+/** Raw fetch for /api/v1/quotes/* — credentials + optional official client header. */
+export function tenantQuotesFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const url = `${gatewayUrl()}/api/v1/quotes${path.startsWith('/') ? path : `/${path}`}`;
+  const jsonBody = Boolean(init.body);
+  return gatewayFetch(url, {
+    ...init,
+    credentials: 'include',
+    headers: tenantApiHeaders(init.headers, jsonBody),
+  });
+}
+
+type ValidateSessionBody = {
+  valid?: boolean;
+  role?: string;
+  email?: string;
+  userId?: string;
+  tenantId?: string;
+  projectId?: string;
+};
+
+/** Guest renters have a session id but no vault user row; /auth/me 404 while validate succeeds. */
+async function currentUserFromValidate(): Promise<CurrentUser | null> {
+  const res = await gatewayFetch(`${gatewayUrl()}/api/v1/auth/validate`, {
+    credentials: 'include',
+    headers: { Accept: 'application/json' },
+  });
+  if (!res.ok) return null;
+  const body = (await res.json().catch(() => null)) as ValidateSessionBody | null;
+  if (!body?.valid) return null;
+  const id = body.userId || '';
+  return {
+    id,
+    userId: id,
+    email: body.email || '',
+    role: body.role || 'guest',
+    tenantId: body.tenantId,
+    projectId: body.projectId,
+  } as CurrentUser;
+}
+
+async function resolveCurrentUser(client: PlatformClient): Promise<CurrentUser | null> {
+  try {
+    const user = await client.auth.getCurrentUser();
+    if (user) return user;
+  } catch {
+    /* kit uses /auth/me; guest sessions may 404 without a vault user row */
+  }
+  return currentUserFromValidate();
+}
+
 export function kit(): PlatformClient {
   return createClient({
     baseUrl: gatewayUrl(),
@@ -94,12 +158,10 @@ export async function recoverConsumerTenantSession(): Promise<boolean> {
  */
 export async function ensureStorefrontSession(): Promise<CurrentUser | null> {
   const client = kit();
-  const existing = await client.auth.getCurrentUser();
-  if (!existing) {
-    if (!(await mintGuestSession())) return null;
-    return client.auth.getCurrentUser();
-  }
-  return existing;
+  const existing = await resolveCurrentUser(client);
+  if (existing) return existing;
+  if (!(await mintGuestSession())) return null;
+  return resolveCurrentUser(client);
 }
 
 export function redirectToLogin(): void {
