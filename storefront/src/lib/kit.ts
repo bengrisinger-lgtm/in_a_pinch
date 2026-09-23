@@ -84,6 +84,8 @@ type ValidateSessionBody = {
   userId?: string;
   tenantId?: string;
   projectId?: string;
+  impersonatorUserId?: string | null;
+  impersonator_user_id?: string | null;
 };
 
 /** Guest renters have a session id but no vault user row; /auth/me 404 while validate succeeds. */
@@ -96,6 +98,8 @@ async function currentUserFromValidate(): Promise<CurrentUser | null> {
   const body = (await res.json().catch(() => null)) as ValidateSessionBody | null;
   if (!body?.valid) return null;
   const id = body.userId || '';
+  const impersonatorUserId =
+    body.impersonatorUserId ?? body.impersonator_user_id ?? null;
   return {
     id,
     userId: id,
@@ -103,6 +107,7 @@ async function currentUserFromValidate(): Promise<CurrentUser | null> {
     role: body.role || 'guest',
     tenantId: body.tenantId,
     projectId: body.projectId,
+    impersonatorUserId,
   } as CurrentUser;
 }
 

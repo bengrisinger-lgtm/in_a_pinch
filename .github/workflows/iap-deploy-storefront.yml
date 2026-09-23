@@ -13,12 +13,6 @@ on:
           - both
           - hub
           - apex
-      build_console_overlay:
-        description: Rebuild hub /console/ overlay (needs symlfy-baas console-app)
-        required: false
-        default: false
-        type: boolean
-
 permissions:
   contents: read
   id-token: write
@@ -62,18 +56,6 @@ jobs:
           cd symlfy-baas/syml-platform/client-sdk
           npm install
           npm run build
-
-      - name: Optional console overlay
-        if: inputs.build_console_overlay == true
-        continue-on-error: true
-        env:
-          SYMLFY_BAAS_ROOT: ${{ github.workspace }}/symlfy-baas
-          VITE_API_GATEWAY_URL: https://api.inapinchav.com
-          VITE_AUTH_URL: https://auth.inapinchav.com
-          VITE_CONSOLE_URL: https://hub.inapinchav.com/console/index.html
-          VITE_BRAND_NAME: In a Pinch AV
-          VITE_SHELL_LINKS: '[{"label":"Hub","href":"/#home"},{"label":"Rentals","href":"/#rentals"},{"label":"Orders","href":"/#orders"},{"label":"Stock","href":"/#stock"},{"label":"Vault","href":"/console/index.html?as=tenant"}]'
-        run: bash scripts/iap-build-console-overlay.sh
 
       - name: Build storefront
         run: |

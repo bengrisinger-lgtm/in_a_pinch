@@ -377,6 +377,9 @@ export async function ensureQuoteTables(db, tenantId) {
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS load_out_time TIME`);
   await db.query(`ALTER TABLE ${schema}.inventory_reservations ADD COLUMN IF NOT EXISTS load_in_time TIME`);
   await db.query(`ALTER TABLE ${schema}.inventory_reservations ADD COLUMN IF NOT EXISTS load_out_time TIME`);
+  await db.query(
+    `ALTER TABLE ${schema}.inventory_reservations ADD COLUMN IF NOT EXISTS quote_id UUID`
+  );
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS calendar_event_id TEXT`);
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS calendar_provider TEXT`);
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS calendar_push_status TEXT`);
