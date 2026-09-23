@@ -62,6 +62,7 @@ jobs:
 
       - name: Optional console overlay
         if: inputs.build_console_overlay == true
+        continue-on-error: true
         env:
           SYMLFY_BAAS_ROOT: ${{ github.workspace }}/symlfy-baas
           VITE_API_GATEWAY_URL: https://api.inapinchav.com

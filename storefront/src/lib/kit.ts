@@ -106,7 +106,8 @@ async function currentUserFromValidate(): Promise<CurrentUser | null> {
   } as CurrentUser;
 }
 
-async function resolveCurrentUser(client: PlatformClient): Promise<CurrentUser | null> {
+/** Prefer kit /auth/me; fall back to /auth/validate when /me 404s (guest + some staff sessions). */
+export async function resolveCurrentUser(client: PlatformClient): Promise<CurrentUser | null> {
   try {
     const user = await client.auth.getCurrentUser();
     if (user) return user;

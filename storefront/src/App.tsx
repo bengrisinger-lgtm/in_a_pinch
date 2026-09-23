@@ -12,6 +12,8 @@ import {
 
   kit,
 
+  resolveCurrentUser,
+
   redirectToLogin,
 
   staffHubHref,
@@ -169,7 +171,7 @@ export default function App() {
 
         } else {
 
-          const current = await kit().auth.getCurrentUser();
+          const current = await resolveCurrentUser(kit());
 
           if (cancelled) return;
 
