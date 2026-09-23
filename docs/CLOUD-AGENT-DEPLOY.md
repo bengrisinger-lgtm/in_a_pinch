@@ -2,6 +2,39 @@
 
 Run **hub**, **apex**, and (optionally) **quote-service** deploys from a Cursor Cloud Agent instead of local PowerShell.
 
+## Full SymlaVault scope (platform + micro-apps)
+
+SymlaVault is **fail-closed by design**: gateway, auth, tenant rules, and micro-apps must stay aligned. Agents that only see one app repo will mis-diagnose (patch IAP when the gateway is wrong, or vice versa).
+
+**Goal:** every Cloud Agent that works on tenants (IAP, Loan Conduit, etc.) also has a **read checkout of `symlfy-baas`** at the same relative paths as your PC (`../../../symlfy-baas` from `micro-applications/.../storefront`).
+
+### Why agents often see only `in_a_pinch`
+
+Cursor can run a **Personal** saved environment for a repo. That override may list **only the primary repo**, even when `.cursor/environment.json` on the branch already declares `repositoryDependencies` for `symlfy-baas`. Fix one of:
+
+1. **Prefer repo-managed config (recommended):** merge `.cursor/` on `main`, open [Cloud Agents → Environments](https://cursor.com/dashboard/cloud-agents/environments), and use / attach the **repository** environment from `in_a_pinch` (not a stale Personal snapshot that omits dependencies).
+2. **Or edit Personal environment:** add **`github.com/bengrisinger-lgtm/symlfy-baas`** under repository / additional repos (same string as in `environment.json` — no `https://`, no trailing slash).
+
+Then **GitHub → Settings → Applications → Cursor → Configure** → grant **read** on **`symlfy-baas`** (and any other private repos you use).
+
+Start a **new** agent after Save. On boot, install should find baas at `../symlfy-baas` or via `SYMLFY_BAAS_ROOT`.
+
+### Optional: platform-first environment
+
+For gateway / Loan Conduit / console work, you can instead attach the environment to **`symlfy-baas` as the primary repo** and add micro-app repos as `repositoryDependencies`. Same GitHub app read access; inverted “home” repo.
+
+### GitHub Actions (deploy) vs Cloud Agent (diagnose)
+
+| Need | Where |
+|------|--------|
+| Clone private `symlfy-baas` in CI | `in_a_pinch` secret **`SYMLFY_BAAS_GITHUB_TOKEN`** |
+| Agent reads platform source on the VM | **`repositoryDependencies`** + GitHub app on `symlfy-baas` |
+| Production deploy IAM | WIF / `GCP_SA_KEY_JSON` (unchanged) |
+
+Agents diagnose; Actions (or your PC `deploy.ps1`) ship. Both need baas checkout for builds that import `@securedbackend/sdk` or `console-app`.
+
+---
+
 ## One-time environment setup
 
 ### A. Open the right place in Cursor
