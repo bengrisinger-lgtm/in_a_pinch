@@ -5,8 +5,9 @@ Platform-wide recurring patterns: **`symlfy-baas/RECURRING-BUG-CLASSES.md`**. Fe
 ## 2026-09-23
 
 - **Docs:** Added canonical `RECURRING-BUG-CLASSES.md` to `symlfy-baas` repo root; agent read-first + cloud-first deploy docs in `in_a_pinch`.
-- **Prod diagnosis:** Guest session OK; `GET /api/v1/quotes/inventory/skus` **500** — missing `quote_id` column on upgraded tenant schema (RECURRING §1). Fix: deploy quote-service with migration shim on `main`.
-- **CI (draft PR #3):** GitHub Actions **Deploy IAP quote-service** + storefront workflow layout fix (`file:` SDK staging per RECURRING §20a). Pending security/IAM review before merge.
+- **Prod diagnosis:** Guest session OK; `GET /api/v1/quotes/inventory/skus` **500** — missing `quote_id` on upgraded tenant schema (RECURRING §1). **Fix:** merge PR #3, run Actions **Deploy IAP quote-service**.
+- **Code:** `quote_id` reservation shims run at start of `ensureQuoteTables()` (§1 ordering).
+- **CI (PR #3):** Deploy workflows + cloud-first docs; quote-service and storefront tests green locally.
 
 ## 2026-09-12 (live platform + IAP)
 
