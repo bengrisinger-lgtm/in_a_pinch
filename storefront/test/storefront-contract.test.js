@@ -75,6 +75,8 @@ describe('IAP storefront contract', () => {
     assert.match(blob, /Mark paid/);
     assert.match(blob, /ensureStorefrontSession/);
     assert.match(blob, /\/api\/v1\/auth\/guest/);
+    assert.match(fs.readFileSync(path.join(root, 'src', 'lib', 'kit.ts'), 'utf8'), /\/api\/v1\/auth\/validate/);
+    assert.match(fs.readFileSync(path.join(root, 'src', 'lib', 'kit.ts'), 'utf8'), /tenantQuotesFetch/);
     assert.match(footerSrc, /Staff sign in/);
     assert.match(footerSrc, /className="site-footer"/);
     assert.match(footerSrc, /Terms of Use/);
