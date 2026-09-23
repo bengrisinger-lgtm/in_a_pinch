@@ -5,6 +5,21 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+bash "$ROOT/scripts/cloud-agent-bootstrap-gcloud.sh"
+
+ensure_symlfy_mount() {
+  if [[ -d /symlfy-baas ]]; then
+    return 0
+  fi
+  if command -v sudo >/dev/null; then
+    sudo mkdir -p /symlfy-baas
+    sudo chown "$(id -u):$(id -g)" /symlfy-baas
+    return 0
+  fi
+  echo "Missing /symlfy-baas mount (Cloud Agent Dockerfile or bootstrap should create it)." >&2
+  exit 1
+}
+
 find_symlfy_baas() {
   if [[ -n "${SYMLFY_BAAS_ROOT:-}" && -f "${SYMLFY_BAAS_ROOT}/syml-platform/client-sdk/package.json" ]]; then
     printf '%s' "$SYMLFY_BAAS_ROOT"
@@ -25,10 +40,7 @@ find_symlfy_baas() {
 
 link_platform_sdk() {
   local baas_root="$1"
-  if [[ ! -d /symlfy-baas ]]; then
-    echo "Missing /symlfy-baas mount (Cloud Agent Dockerfile should create it)." >&2
-    exit 1
-  fi
+  ensure_symlfy_mount
   ln -sfn "$baas_root" /symlfy-baas
 
   local sdk_root="$baas_root/syml-platform/client-sdk"
