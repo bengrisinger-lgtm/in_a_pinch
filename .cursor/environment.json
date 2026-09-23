@@ -1,0 +1,20 @@
+{
+  "name": "In A Pinch — deploy",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+  "user": "node",
+  "install": "bash scripts/cloud-agent-install.sh",
+  "repositoryDependencies": [],
+  "egressAllowlist": [
+    "storage.googleapis.com",
+    "www.googleapis.com",
+    "oauth2.googleapis.com",
+    "cloud.google.com",
+    "artifactregistry.googleapis.com",
+    "cloudbuild.googleapis.com",
+    "run.googleapis.com",
+    "secretmanager.googleapis.com"
+  ]
+}
