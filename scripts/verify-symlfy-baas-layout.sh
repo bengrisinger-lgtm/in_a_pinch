@@ -15,6 +15,7 @@ echo "=== symlfy-baas root: $ROOT ==="
 ls -la "$ROOT" | head -40
 
 SDK="$ROOT/syml-platform/client-sdk/package.json"
+RECURRING="$ROOT/RECURRING-BUG-CLASSES.md"
 CONSOLE_ROOT="$ROOT/console-app/package.json"
 CONSOLE_PLATFORM="$ROOT/syml-platform/console-app/package.json"
 
@@ -25,6 +26,12 @@ if [[ -f "$SDK" ]]; then
 else
   echo "MISSING client-sdk: $SDK" >&2
   exit 1
+fi
+
+if [[ -f "$RECURRING" ]]; then
+  echo "OK  RECURRING-BUG-CLASSES (agent read-first): $RECURRING"
+else
+  echo "WARN RECURRING-BUG-CLASSES missing at repo root (add before agent/deploy work): $RECURRING" >&2
 fi
 
 if [[ -f "$CONSOLE_ROOT" ]]; then

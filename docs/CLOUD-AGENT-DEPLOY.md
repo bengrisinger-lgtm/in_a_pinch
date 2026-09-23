@@ -1,5 +1,7 @@
 # Cloud Agent deployment (IAP)
 
+**Read first:** [AGENT-READ-FIRST.md](./AGENT-READ-FIRST.md) and `symlfy-baas/RECURRING-BUG-CLASSES.md` (platform repo root).
+
 Run **hub**, **apex**, and **quote-service** deploys from a Cursor Cloud Agent or **GitHub Actions** (see [CLOUD-FIRST-DEPLOY.md](./CLOUD-FIRST-DEPLOY.md)) — not from a desktop PC.
 
 ## Full SymlaVault scope (platform + micro-apps)
