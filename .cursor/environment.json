@@ -8,6 +8,8 @@
   "install": "bash scripts/cloud-agent-install.sh",
   "repositoryDependencies": [],
   "egressAllowlist": [
+    "registry-1.docker.io",
+    "auth.docker.io",
     "storage.googleapis.com",
     "www.googleapis.com",
     "oauth2.googleapis.com",
