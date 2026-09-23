@@ -4,12 +4,29 @@ Uses pool **`iap-cloud-agent-1`**, provider **`github`**, project **`securedback
 
 ## After creating the pool (you did this)
 
-### 1. Service account bucket access
+### 1. Service account IAM (one-time)
 
-On **`iap-cloud-agent-deploy@securedbackend-production.iam.gserviceaccount.com`**, grant **Storage Object Admin** on:
+On **`iap-cloud-agent-deploy@securedbackend-production.iam.gserviceaccount.com`**:
 
-- `securedbackend-production-ta-cadel-7414-hub-app`
-- `securedbackend-production-ta-cadel-7414-coming-soon-app`
+**Storefront (GCS rsync)**
+
+- **Storage Object Admin** on:
+  - `securedbackend-production-ta-cadel-7414-hub-app`
+  - `securedbackend-production-ta-cadel-7414-coming-soon-app`
+
+**Quote-service (Cloud Run + register)** — required for **Deploy IAP quote-service**:
+
+| Role | Why |
+|------|-----|
+| `roles/run.admin` (or `run.developer` + `iam.serviceAccountUser` on runtime SA) | `gcloud run deploy`, IAM bindings |
+| `roles/cloudbuild.builds.editor` | `gcloud run deploy --source` |
+| `roles/secretmanager.secretAccessor` | Read `REGISTRATION_KEY`, `RUNTIME_DB_PASSWORD`; add versions to `quote-service-hmac` |
+| `roles/secretmanager.admin` *or* narrow custom | Create `quote-service-hmac` on first deploy if missing |
+| `roles/cloudsql.client` | Cloud SQL attachment on Cloud Run |
+
+Runtime service account (`backend-backend-sa@…` from production prefix) stays the **Cloud Run identity**; the GitHub deploy SA only needs permission to deploy **as** that runtime SA (`roles/iam.serviceAccountUser` on it).
+
+You do **not** need a JSON key on your laptop when WIF is configured.
 
 ### 2. Let GitHub impersonate the service account
 
@@ -53,16 +70,31 @@ gcloud iam service-accounts add-iam-policy-binding \
 
 The default `GITHUB_TOKEN` cannot read other private repos.
 
-### 4. Run the workflow
+### 4. Run workflows (phone or laptop — no PC)
 
-**Actions → Deploy IAP storefront → Run workflow**
+GitHub mobile app or [Actions](https://github.com/bengrisinger-lgtm/in_a_pinch/actions) → **Run workflow**:
+
+| Workflow | When |
+|----------|------|
+| **Deploy IAP quote-service** | Catalog SKUs 500, schema/backend fixes on `main` |
+| **Deploy IAP storefront** | Hub/apex UI, `kit.ts`, storefront changes |
+| **Deploy IAP hub console overlay** | Vault `/console/` only |
+
+**Deploy IAP storefront**
 
 - **target:** `both` (hub + apex), or hub/apex only  
-- **build_console_overlay:** enable when hub `/console/` changed and `console-app` is available in symlfy-baas  
+- **build_console_overlay:** enable when hub `/console/` changed  
 
-## Workflow file
+**Deploy IAP quote-service**
 
-`.github/workflows/iap-deploy-storefront.yml`
+- Default tenant: In A Pinch (`987bcdaf-320d-46bf-bfb3-4bdcdffe1de1`)  
+- **skip_register:** only for image-only experiments  
+
+## Workflow files
+
+- `.github/workflows/iap-deploy-storefront.yml`
+- `.github/workflows/iap-deploy-quote-service.yml`
+- `.github/workflows/iap-deploy-hub-console.yml`
 
 ## Verify WIF
 

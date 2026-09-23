@@ -1,6 +1,6 @@
 # Cloud Agent deployment (IAP)
 
-Run **hub**, **apex**, and (optionally) **quote-service** deploys from a Cursor Cloud Agent instead of local PowerShell.
+Run **hub**, **apex**, and **quote-service** deploys from a Cursor Cloud Agent or **GitHub Actions** (see [CLOUD-FIRST-DEPLOY.md](./CLOUD-FIRST-DEPLOY.md)) — not from a desktop PC.
 
 ## Full SymlaVault scope (platform + micro-apps)
 
@@ -131,15 +131,17 @@ IAP_CONSOLE_OVERLAY=1 IAP_DEPLOY_BUILD=1 IAP_APP_SLUG=hub bash scripts/iap-deplo
 IAP_APP_SLUG=coming-soon bash scripts/iap-deploy-storefront.sh
 ```
 
-### Quote-service (still use PowerShell locally unless you extend bash)
+### Quote-service (Cloud Run — no PC)
 
-Cloud Run deploy is only implemented in `quote-service/deploy.ps1` today. From the agent, run tests and image staging after install:
+Same as GitHub Actions (preferred from phone: **Actions → Deploy IAP quote-service**):
 
 ```bash
-cd quote-service && npm test
+bash scripts/iap-deploy-quote-service.sh
 ```
 
-For production quote-service releases, use `deploy.ps1 -TenantId 987bcdaf-320d-46bf-bfb3-4bdcdffe1de1` on a machine with full IAM, or ask for a bash port in a follow-up.
+Requires the deploy service account (WIF in Actions, or `GCP_SA_KEY_JSON` on the agent) with Cloud Run + Secret Manager IAM — see `docs/GITHUB-WIF-DEPLOY.md`.
+
+PowerShell `quote-service/deploy.ps1` remains for parity on a GrizzTeam PC but is **not** required.
 
 ## Non-secret defaults
 

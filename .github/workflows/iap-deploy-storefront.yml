@@ -1,7 +1,4 @@
-# Deploy IAP storefront to GCS (hub + apex). Layout mirrors local PC:
-#   <root>/symlfy-baas
-#   <root>/micro-applications/in-a-pinch/storefront  (file:../../../symlfy-baas/...)
-# Same steps as storefront/deploy.ps1 -Build + rsync (no extra client-sdk rebuild).
+# Deploy IAP storefront to GCS (hub + apex). Run from phone/laptop — no PC PowerShell.
 name: Deploy IAP storefront
 
 on:
@@ -16,6 +13,12 @@ on:
           - both
           - hub
           - apex
+      build_console_overlay:
+        description: Rebuild hub /console/ overlay before hub upload
+        required: false
+        default: false
+        type: boolean
+
 permissions:
   contents: read
   id-token: write
@@ -25,18 +28,15 @@ env:
   GCP_WIF_PROVIDER: projects/248381849073/locations/global/workloadIdentityPools/iap-cloud-agent-1/providers/github
   GCP_SERVICE_ACCOUNT: iap-cloud-agent-deploy@securedbackend-production.iam.gserviceaccount.com
   IAP_TENANT_SLUG: cadel-7414
-  IAP_ROOT: micro-applications/in-a-pinch
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout in_a_pinch (monorepo path)
+      - name: Checkout in_a_pinch
         uses: actions/checkout@v4
-        with:
-          path: micro-applications/in-a-pinch
 
-      - name: Checkout symlfy-baas (sibling of micro-applications/)
+      - name: Checkout symlfy-baas
         uses: actions/checkout@v4
         with:
           repository: bengrisinger-lgtm/symlfy-baas
@@ -52,17 +52,24 @@ jobs:
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Verify layout (same as local GrizzTeam tree)
-        run: |
-          test -f symlfy-baas/syml-platform/client-sdk/package.json
-          test -f "${{ env.IAP_ROOT }}/storefront/package.json"
-          test -f "${{ env.IAP_ROOT }}/storefront/deploy.ps1"
-          ls -la symlfy-baas/syml-platform/client-sdk/dist/ | head -20
-          bash "${{ env.IAP_ROOT }}/scripts/verify-symlfy-baas-layout.sh" "${{ github.workspace }}/symlfy-baas"
+      - name: Verify symlfy-baas layout
+        run: bash scripts/verify-symlfy-baas-layout.sh "${{ github.workspace }}/symlfy-baas"
 
-      - name: Build storefront (deploy.ps1 -Build)
-        working-directory: ${{ env.IAP_ROOT }}/storefront
+      - name: Link SDK for npm (repo root + sibling baas)
+        env:
+          SYMLFY_BAAS_ROOT: ${{ github.workspace }}/symlfy-baas
+        run: bash scripts/link-symlfy-sdk-for-npm.sh
+
+      - name: Build console overlay
+        if: inputs.build_console_overlay && (inputs.target == 'hub' || inputs.target == 'both')
+        env:
+          SYMLFY_BAAS_ROOT: ${{ github.workspace }}/symlfy-baas
+        run: bash scripts/iap-build-console-overlay.sh
+
+      - name: Build storefront
         run: |
+          cd storefront
+          rm -f package-lock.json
           npm install
           npm test
           npm run build
@@ -72,10 +79,10 @@ jobs:
         run: |
           BUCKET="gs://${GCP_PROJECT}-ta-${IAP_TENANT_SLUG}-hub-app"
           gcloud storage rsync --recursive --delete-unmatched-destination-objects \
-            "${{ env.IAP_ROOT }}/storefront/dist" "$BUCKET" --exclude='^catalog-media/.*'
-          if [[ -f "${{ env.IAP_ROOT }}/storefront/console-dist/index.html" ]]; then
+            storefront/dist "$BUCKET" --exclude='^catalog-media/.*'
+          if [[ -f storefront/console-dist/index.html ]]; then
             gcloud storage rsync --recursive --delete-unmatched-destination-objects \
-              "${{ env.IAP_ROOT }}/storefront/console-dist" "$BUCKET/console"
+              storefront/console-dist "$BUCKET/console"
           fi
 
       - name: Upload apex bucket
@@ -83,4 +90,4 @@ jobs:
         run: |
           BUCKET="gs://${GCP_PROJECT}-ta-${IAP_TENANT_SLUG}-coming-soon-app"
           gcloud storage rsync --recursive --delete-unmatched-destination-objects \
-            "${{ env.IAP_ROOT }}/storefront/dist" "$BUCKET" --exclude='^catalog-media/.*'
+            storefront/dist "$BUCKET" --exclude='^catalog-media/.*'
