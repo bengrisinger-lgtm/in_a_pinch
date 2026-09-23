@@ -1,4 +1,7 @@
-# Deploy IAP storefront to GCS (hub + apex) via Workload Identity Federation — no SA JSON keys.
+# Deploy IAP storefront to GCS (hub + apex). Layout mirrors local PC:
+#   <root>/symlfy-baas
+#   <root>/micro-applications/in-a-pinch/storefront  (file:../../../symlfy-baas/...)
+# Same steps as storefront/deploy.ps1 -Build + rsync (no extra client-sdk rebuild).
 name: Deploy IAP storefront
 
 on:
@@ -22,15 +25,18 @@ env:
   GCP_WIF_PROVIDER: projects/248381849073/locations/global/workloadIdentityPools/iap-cloud-agent-1/providers/github
   GCP_SERVICE_ACCOUNT: iap-cloud-agent-deploy@securedbackend-production.iam.gserviceaccount.com
   IAP_TENANT_SLUG: cadel-7414
+  IAP_ROOT: micro-applications/in-a-pinch
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout in_a_pinch
+      - name: Checkout in_a_pinch (monorepo path)
         uses: actions/checkout@v4
+        with:
+          path: micro-applications/in-a-pinch
 
-      - name: Checkout symlfy-baas (SDK)
+      - name: Checkout symlfy-baas (sibling of micro-applications/)
         uses: actions/checkout@v4
         with:
           repository: bengrisinger-lgtm/symlfy-baas
@@ -46,23 +52,17 @@ jobs:
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Verify symlfy-baas layout (logged every run)
-        run: bash scripts/verify-symlfy-baas-layout.sh "${GITHUB_WORKSPACE}/symlfy-baas"
-
-      - name: Build client-sdk for browser (IAP Vite)
-        run: bash scripts/build-client-sdk-for-iap.sh symlfy-baas/syml-platform/client-sdk
-
-      - name: Link SDK for monorepo-style imports
+      - name: Verify layout (same as local GrizzTeam tree)
         run: |
-          sudo mkdir -p /symlfy-baas
-          sudo ln -sfn "${GITHUB_WORKSPACE}/symlfy-baas" /symlfy-baas
-
-      - name: Build storefront
-        run: |
-          # package.json uses file:../../../symlfy-baas (monorepo layout); in Actions baas is ../symlfy-baas
           test -f symlfy-baas/syml-platform/client-sdk/package.json
-          npm pkg set dependencies.@securedbackend/sdk="file:../symlfy-baas/syml-platform/client-sdk" --prefix storefront
-          cd storefront
+          test -f "${{ env.IAP_ROOT }}/storefront/package.json"
+          test -f "${{ env.IAP_ROOT }}/storefront/deploy.ps1"
+          ls -la symlfy-baas/syml-platform/client-sdk/dist/ | head -20
+          bash "${{ env.IAP_ROOT }}/scripts/verify-symlfy-baas-layout.sh" "${{ github.workspace }}/symlfy-baas"
+
+      - name: Build storefront (deploy.ps1 -Build)
+        working-directory: ${{ env.IAP_ROOT }}/storefront
+        run: |
           npm install
           npm test
           npm run build
@@ -72,10 +72,10 @@ jobs:
         run: |
           BUCKET="gs://${GCP_PROJECT}-ta-${IAP_TENANT_SLUG}-hub-app"
           gcloud storage rsync --recursive --delete-unmatched-destination-objects \
-            storefront/dist "$BUCKET" --exclude='^catalog-media/.*'
-          if [[ -f storefront/console-dist/index.html ]]; then
+            "${{ env.IAP_ROOT }}/storefront/dist" "$BUCKET" --exclude='^catalog-media/.*'
+          if [[ -f "${{ env.IAP_ROOT }}/storefront/console-dist/index.html" ]]; then
             gcloud storage rsync --recursive --delete-unmatched-destination-objects \
-              storefront/console-dist "$BUCKET/console"
+              "${{ env.IAP_ROOT }}/storefront/console-dist" "$BUCKET/console"
           fi
 
       - name: Upload apex bucket
@@ -83,4 +83,4 @@ jobs:
         run: |
           BUCKET="gs://${GCP_PROJECT}-ta-${IAP_TENANT_SLUG}-coming-soon-app"
           gcloud storage rsync --recursive --delete-unmatched-destination-objects \
-            storefront/dist "$BUCKET" --exclude='^catalog-media/.*'
+            "${{ env.IAP_ROOT }}/storefront/dist" "$BUCKET" --exclude='^catalog-media/.*'

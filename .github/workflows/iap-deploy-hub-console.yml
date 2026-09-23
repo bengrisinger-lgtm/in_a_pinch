@@ -1,4 +1,4 @@
-# Hub only: rebuild /console/ Vault overlay from symlfy-baas/console-app and rsync to hub bucket.
+# Hub /console/ overlay — same as storefront/build-console-overlay.ps1 + deploy.ps1 console rsync.
 name: Deploy IAP hub console overlay
 
 on:
@@ -13,13 +13,16 @@ env:
   GCP_WIF_PROVIDER: projects/248381849073/locations/global/workloadIdentityPools/iap-cloud-agent-1/providers/github
   GCP_SERVICE_ACCOUNT: iap-cloud-agent-deploy@securedbackend-production.iam.gserviceaccount.com
   IAP_TENANT_SLUG: cadel-7414
+  IAP_ROOT: micro-applications/in-a-pinch
 
 jobs:
   console:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout in_a_pinch
+      - name: Checkout in_a_pinch (monorepo path)
         uses: actions/checkout@v4
+        with:
+          path: micro-applications/in-a-pinch
 
       - name: Checkout symlfy-baas
         uses: actions/checkout@v4
@@ -38,23 +41,15 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Verify symlfy-baas layout
-        run: bash scripts/verify-symlfy-baas-layout.sh "${GITHUB_WORKSPACE}/symlfy-baas"
+        run: bash "${{ env.IAP_ROOT }}/scripts/verify-symlfy-baas-layout.sh" "${{ github.workspace }}/symlfy-baas"
 
-      - name: Build client-sdk for browser (console-app may import kit)
-        run: bash scripts/build-client-sdk-for-iap.sh symlfy-baas/syml-platform/client-sdk
-
-      - name: Build console overlay
+      - name: Build console overlay (build-console-overlay.ps1)
         env:
           SYMLFY_BAAS_ROOT: ${{ github.workspace }}/symlfy-baas
-          VITE_API_GATEWAY_URL: https://api.inapinchav.com
-          VITE_AUTH_URL: https://auth.inapinchav.com
-          VITE_CONSOLE_URL: https://hub.inapinchav.com/console/index.html
-          VITE_BRAND_NAME: In a Pinch AV
-          VITE_SHELL_LINKS: '[{"label":"Hub","href":"/#home"},{"label":"Rentals","href":"/#rentals"},{"label":"Orders","href":"/#orders"},{"label":"Stock","href":"/#stock"},{"label":"Vault","href":"/console/index.html?as=tenant"}]'
-        run: bash scripts/iap-build-console-overlay.sh
+        run: bash "${{ env.IAP_ROOT }}/scripts/iap-build-console-overlay.sh"
 
       - name: Upload hub /console/
         run: |
           BUCKET="gs://${GCP_PROJECT}-ta-${IAP_TENANT_SLUG}-hub-app"
           gcloud storage rsync --recursive --delete-unmatched-destination-objects \
-            storefront/console-dist "$BUCKET/console"
+            "${{ env.IAP_ROOT }}/storefront/console-dist" "$BUCKET/console"

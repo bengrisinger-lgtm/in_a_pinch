@@ -32,8 +32,9 @@ link_platform_sdk() {
   ln -sfn "$baas_root" /symlfy-baas
 
   local sdk_root="$baas_root/syml-platform/client-sdk"
-  if [[ ! -f "$sdk_root/dist/server.js" && -f "$sdk_root/package.json" ]]; then
-    echo "Building @securedbackend/sdk (dist missing)…"
+  # Match local deploy.ps1: storefront does not rebuild client-sdk. Only build if dist is absent.
+  if [[ ! -f "$sdk_root/dist/index.js" && -f "$sdk_root/package.json" ]]; then
+    echo "Building @securedbackend/sdk (dist/index.js missing)…"
     (cd "$sdk_root" && npm install && npm run build)
   fi
 }
