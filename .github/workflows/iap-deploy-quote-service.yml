@@ -64,4 +64,7 @@ jobs:
           IAP_TENANT_SLUG: ${{ env.IAP_TENANT_SLUG }}
           QUOTE_SKIP_TESTS: ${{ inputs.skip_tests && '1' || '0' }}
           QUOTE_SKIP_REGISTER: ${{ inputs.skip_register && '1' || '0' }}
+          # WIF deploy SA must not need secretmanager.secrets.create (secret exists from PC deploy).
+          QUOTE_ALLOW_HMAC_CREATE: "0"
+          QUOTE_SKIP_SECRET_IAM: "1"
         run: bash scripts/iap-deploy-quote-service.sh

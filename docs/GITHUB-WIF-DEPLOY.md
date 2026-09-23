@@ -20,13 +20,28 @@ On **`iap-cloud-agent-deploy@securedbackend-production.iam.gserviceaccount.com`*
 |------|-----|
 | `roles/run.admin` (or `run.developer` + `iam.serviceAccountUser` on runtime SA) | `gcloud run deploy`, IAM bindings |
 | `roles/cloudbuild.builds.editor` | `gcloud run deploy --source` |
-| `roles/secretmanager.secretAccessor` | Read `REGISTRATION_KEY`, `RUNTIME_DB_PASSWORD`; add versions to `quote-service-hmac` |
-| `roles/secretmanager.admin` *or* narrow custom | Create `quote-service-hmac` on first deploy if missing |
+| `roles/secretmanager.secretAccessor` | On secrets **`REGISTRATION_KEY`**, **`RUNTIME_DB_PASSWORD`**, **`quote-service-hmac`** (read for deploy + register) |
+| `roles/secretmanager.secretVersionManager` | On **`quote-service-hmac` only** — if register mints a new HMAC (`versions add`). **Not** `secrets.create`. |
 | `roles/cloudsql.client` | Cloud SQL attachment on Cloud Run |
 
 Runtime service account (`backend-backend-sa@…` from production prefix) stays the **Cloud Run identity**; the GitHub deploy SA only needs permission to deploy **as** that runtime SA (`roles/iam.serviceAccountUser` on it).
 
 You do **not** need a JSON key on your laptop when WIF is configured.
+
+**One-time Secret Manager bindings** (if Actions failed on `secretmanager.secrets.create` — that was the deploy script trying to *create* a secret that already exists from PC deploy; merge the script fix, then ensure **accessor** on existing secrets):
+
+```bash
+DEPLOY_SA=iap-cloud-agent-deploy@securedbackend-production.iam.gserviceaccount.com
+PROJECT=securedbackend-production
+for SEC in quote-service-hmac REGISTRATION_KEY RUNTIME_DB_PASSWORD; do
+  gcloud secrets add-iam-policy-binding "$SEC" --project="$PROJECT" \
+    --member="serviceAccount:$DEPLOY_SA" --role="roles/secretmanager.secretAccessor"
+done
+gcloud secrets add-iam-policy-binding quote-service-hmac --project="$PROJECT" \
+  --member="serviceAccount:$DEPLOY_SA" --role="roles/secretmanager.secretVersionManager"
+```
+
+Run the block as a project owner (your PC is fine). Do **not** grant project-wide `secretmanager.admin` to the deploy SA unless you accept create/delete.
 
 ### 2. Let GitHub impersonate the service account
 
