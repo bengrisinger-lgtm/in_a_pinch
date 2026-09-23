@@ -28,7 +28,29 @@ Runtime service account (`backend-backend-sa@…` from production prefix) stays 
 
 You do **not** need a JSON key on your laptop when WIF is configured.
 
-**One-time Secret Manager bindings** (if Actions failed on `secretmanager.secrets.create` — that was the deploy script trying to *create* a secret that already exists from PC deploy; merge the script fix, then ensure **accessor** on existing secrets):
+**One-time Secret Manager bindings** (if Actions failed on `secretmanager.secrets.create` — merge PR #5 script fix, then bind **existing** secrets). Run as a **project owner**. GrizzTeam PC = **PowerShell** (not bash).
+
+**PowerShell (copy all, paste into one session):**
+
+```powershell
+$DeploySa = "iap-cloud-agent-deploy@securedbackend-production.iam.gserviceaccount.com"
+$Project = "securedbackend-production"
+$Member = "serviceAccount:$DeploySa"
+
+foreach ($Sec in @("quote-service-hmac", "REGISTRATION_KEY", "RUNTIME_DB_PASSWORD")) {
+  gcloud secrets add-iam-policy-binding $Sec `
+    --project=$Project `
+    --member=$Member `
+    --role="roles/secretmanager.secretAccessor"
+}
+
+gcloud secrets add-iam-policy-binding quote-service-hmac `
+  --project=$Project `
+  --member=$Member `
+  --role="roles/secretmanager.secretVersionManager"
+```
+
+**bash (Linux / GitHub Actions runner only):**
 
 ```bash
 DEPLOY_SA=iap-cloud-agent-deploy@securedbackend-production.iam.gserviceaccount.com
@@ -41,7 +63,7 @@ gcloud secrets add-iam-policy-binding quote-service-hmac --project="$PROJECT" \
   --member="serviceAccount:$DEPLOY_SA" --role="roles/secretmanager.secretVersionManager"
 ```
 
-Run the block as a project owner (your PC is fine). Do **not** grant project-wide `secretmanager.admin` to the deploy SA unless you accept create/delete.
+Do **not** grant project-wide `secretmanager.admin` to the deploy SA unless you accept create/delete.
 
 ### 2. Let GitHub impersonate the service account
 
