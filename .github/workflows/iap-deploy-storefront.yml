@@ -73,9 +73,12 @@ jobs:
         run: bash scripts/iap-build-console-overlay.sh
 
       - name: Build storefront
-        working-directory: storefront
         run: |
-          npm ci
+          # package.json uses file:../../../symlfy-baas (monorepo layout); in Actions baas is ../symlfy-baas
+          test -f symlfy-baas/syml-platform/client-sdk/package.json
+          npm pkg set dependencies.@securedbackend/sdk="file:../symlfy-baas/syml-platform/client-sdk" --prefix storefront
+          cd storefront
+          npm install
           npm test
           npm run build
 
