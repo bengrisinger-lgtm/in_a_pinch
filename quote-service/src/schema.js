@@ -329,6 +329,17 @@ export async function ensureQuoteTables(db, tenantId) {
     await db.query(`CREATE TABLE IF NOT EXISTS ${qualified} (${table.ddl})`);
     await forceRls(db, qualified, name);
   }
+  // §1 RECURRING: shims on upgraded DBs before any code path references the column
+  // (expireStaleHolds runs immediately after ensureQuoteTables on GET /inventory/skus).
+  await db.query(
+    `ALTER TABLE ${schema}.inventory_reservations ADD COLUMN IF NOT EXISTS quote_id UUID`
+  );
+  await db.query(
+    `ALTER TABLE ${schema}.inventory_reservations ADD COLUMN IF NOT EXISTS load_in_time TIME`
+  );
+  await db.query(
+    `ALTER TABLE ${schema}.inventory_reservations ADD COLUMN IF NOT EXISTS load_out_time TIME`
+  );
   await db.query(
     `CREATE UNIQUE INDEX IF NOT EXISTS inventory_categories_name_uidx
         ON ${schema}.inventory_categories (tenant_id, lower(name))`
@@ -375,11 +386,6 @@ export async function ensureQuoteTables(db, tenantId) {
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS ends_on DATE`);
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS load_in_time TIME`);
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS load_out_time TIME`);
-  await db.query(`ALTER TABLE ${schema}.inventory_reservations ADD COLUMN IF NOT EXISTS load_in_time TIME`);
-  await db.query(`ALTER TABLE ${schema}.inventory_reservations ADD COLUMN IF NOT EXISTS load_out_time TIME`);
-  await db.query(
-    `ALTER TABLE ${schema}.inventory_reservations ADD COLUMN IF NOT EXISTS quote_id UUID`
-  );
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS calendar_event_id TEXT`);
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS calendar_provider TEXT`);
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS calendar_push_status TEXT`);

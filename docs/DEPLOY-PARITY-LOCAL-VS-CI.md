@@ -21,7 +21,7 @@ Your machine uses a **parent folder** layout (see `storefront/package.json`):
 
 Remote automation must **match that layout and those steps**. Checking out `in_a_pinch` and `symlfy-baas` as siblings inside the repo root breaks `file:../../../symlfy-baas` unless paths are rewritten.
 
-GitHub Actions workflows use the monorepo paths above (`micro-applications/in-a-pinch` + `symlfy-baas`).
+GitHub Actions check out **`in_a_pinch` at repo root** and **`symlfy-baas` as a sibling folder**, then `scripts/link-symlfy-sdk-for-npm.sh` rewrites the `file:` SDK path for that layout (working tree only — not committed).
 
 ## Platform repo access
 
@@ -54,4 +54,4 @@ If remote deploy still diverges from your PC, these are the source of truth:
 | `storefront/deploy.ps1 -Build` | Actions **Deploy IAP storefront** |
 | `storefront/deploy.ps1 -AppSlug coming-soon` | Same workflow, apex upload step |
 | Hub `/console/` only | Actions **Deploy IAP hub console overlay** |
-| `quote-service/deploy.ps1 -TenantId …` | Still local/PC (Cloud Run + IAM); not ported to Actions yet |
+| `quote-service/deploy.ps1 -TenantId …` | **Actions → Deploy IAP quote-service** or `bash scripts/iap-deploy-quote-service.sh` (Cloud Agent) |

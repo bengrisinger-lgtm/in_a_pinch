@@ -19,7 +19,15 @@ Never mount `COOKIE_SECRET`. Never send tenant id from the browser.
 
 ## Deploy (Cloud Run + register)
 
-From this directory, with gcloud logged in:
+**Recommended (no PC):** GitHub → **Actions → Deploy IAP quote-service** → Run workflow.
+
+**Cloud Agent / Linux:**
+
+```bash
+bash scripts/iap-deploy-quote-service.sh
+```
+
+**Optional (GrizzTeam PC):**
 
 ```powershell
 .\deploy.ps1

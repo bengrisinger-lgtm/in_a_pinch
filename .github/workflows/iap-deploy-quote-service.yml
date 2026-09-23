@@ -1,8 +1,19 @@
-# Hub /console/ overlay — same as storefront/build-console-overlay.ps1 + deploy.ps1 console rsync.
-name: Deploy IAP hub console overlay
+# Deploy IAP quote-service to Cloud Run (fixes SKUs, schema migrations, etc.) — no PC.
+name: Deploy IAP quote-service
 
 on:
   workflow_dispatch:
+    inputs:
+      skip_tests:
+        description: Skip npm test before deploy
+        required: false
+        default: false
+        type: boolean
+      skip_register:
+        description: Skip POST /auth/services (image only)
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -12,10 +23,11 @@ env:
   GCP_PROJECT: securedbackend-production
   GCP_WIF_PROVIDER: projects/248381849073/locations/global/workloadIdentityPools/iap-cloud-agent-1/providers/github
   GCP_SERVICE_ACCOUNT: iap-cloud-agent-deploy@securedbackend-production.iam.gserviceaccount.com
+  IAP_TENANT_ID: 987bcdaf-320d-46bf-bfb3-4bdcdffe1de1
   IAP_TENANT_SLUG: cadel-7414
 
 jobs:
-  console:
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout in_a_pinch
@@ -37,16 +49,19 @@ jobs:
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Verify symlfy-baas layout
-        run: bash scripts/verify-symlfy-baas-layout.sh "${{ github.workspace }}/symlfy-baas"
+      - name: Install jq
+        run: sudo apt-get update -qq && sudo apt-get install -y jq
 
-      - name: Build console overlay
+      - name: Verify layout
         env:
           SYMLFY_BAAS_ROOT: ${{ github.workspace }}/symlfy-baas
-        run: bash scripts/iap-build-console-overlay.sh
+        run: bash scripts/verify-symlfy-baas-layout.sh "$SYMLFY_BAAS_ROOT"
 
-      - name: Upload hub /console/
-        run: |
-          BUCKET="gs://${GCP_PROJECT}-ta-${IAP_TENANT_SLUG}-hub-app"
-          gcloud storage rsync --recursive --delete-unmatched-destination-objects \
-            storefront/console-dist "$BUCKET/console"
+      - name: Deploy quote-service
+        env:
+          SYMLFY_BAAS_ROOT: ${{ github.workspace }}/symlfy-baas
+          IAP_TENANT_ID: ${{ env.IAP_TENANT_ID }}
+          IAP_TENANT_SLUG: ${{ env.IAP_TENANT_SLUG }}
+          QUOTE_SKIP_TESTS: ${{ inputs.skip_tests && '1' || '0' }}
+          QUOTE_SKIP_REGISTER: ${{ inputs.skip_register && '1' || '0' }}
+        run: bash scripts/iap-deploy-quote-service.sh

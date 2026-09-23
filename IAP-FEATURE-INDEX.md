@@ -2,7 +2,9 @@
 
 **Audience:** Developers and agents finding IAP behavior without spelunking the whole monorepo. Platform contract: `micro-applications/TENANT-SECURITY-RULES.md`. Product boundary: `SYMLAVAULT-ALIGNMENT.md` (IAP is a tenant app, not the vault).
 
-**Execution playbook:** `OCTOBER-BUILD-PLAYBOOK.md` (IAP October slices). **Do not** put IAP business in `console-service`.
+**Agents:** [docs/AGENT-READ-FIRST.md](./docs/AGENT-READ-FIRST.md) · **Recurring bugs:** `symlfy-baas/RECURRING-BUG-CLASSES.md` (platform repo root).
+
+**Execution playbook:** [docs/OCTOBER-BUILD-PLAYBOOK.md](./docs/OCTOBER-BUILD-PLAYBOOK.md) (IAP October slices). **Do not** put IAP business in `console-service`.
 
 **Deploy hosts:** Hub staff `https://hub.inapinchav.com/` · Consumer shop `https://inapinchav.com/` · API via gateway · Backend Cloud Run `quote-service` (pinch/quote store).
 
