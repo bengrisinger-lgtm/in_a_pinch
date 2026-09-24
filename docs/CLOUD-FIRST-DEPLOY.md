@@ -62,14 +62,25 @@ gcloud run services describe quote-service `
 
 If traffic is already **`revisionName: quote-service-00034-rhw`** at **100%**, you do **not** need a traffic change for prod — skip `update-traffic`.
 
-**Unblock deploys:** delete the failed revision so `latestCreated` is no longer 00035:
+**Unblock deploys:** GCP **will not delete** the latest created revision (`FAILED_PRECONDITION`). Supersede it by deploying the **same image as the ready revision** with **`--no-traffic`** (creates a new latest-created that should pass startup):
+
+```powershell
+$ready = "quote-service-00034-rhw"
+$img = gcloud run revisions describe $ready `
+  --project securedbackend-production --region us-central1 `
+  --format="value(spec.containers[0].image)"
+
+gcloud run deploy quote-service `
+  --project securedbackend-production --region us-central1 `
+  --image=$img --no-traffic
+```
+
+Re-run **describe**; `latestCreatedRevisionName` should be a **new** Ready revision (not 00035). You can then delete **00035** if it is no longer latest created:
 
 ```powershell
 gcloud run revisions delete quote-service-00035-xmk `
   --project securedbackend-production --region us-central1 --quiet
 ```
-
-Re-run **describe**; `latestCreatedRevisionName` should match **00034-rhw** (or a new Ready revision after a deploy).
 
 Then merge **[PR #16](https://github.com/bengrisinger-lgtm/in_a_pinch/pull/16)** (traffic pinned to **ready** only, skip redundant startup migrate) and run **Deploy IAP quote-service**.
 
