@@ -17,7 +17,7 @@ That grants **`iap-cloud-agent-deploy@securedbackend-production.iam.gserviceacco
 
 | Scope | Roles |
 |-------|--------|
-| **Project** | `run.admin`, `cloudbuild.builds.editor`, `cloudsql.client`, `artifactregistry.writer`, `serviceusage.serviceUsageConsumer` |
+| **Project** | `run.admin`, `cloudbuild.builds.editor`, `cloudsql.client`, `artifactregistry.writer`, `serviceusage.serviceUsageConsumer`, `logging.viewer` (quote deploy log dump + diagnose workflow) |
 | **Runtime SA** `backend-backend-sa@…` | `iam.serviceAccountUser` for deploy SA |
 | **Secrets** `quote-service-hmac`, `REGISTRATION_KEY`, `RUNTIME_DB_PASSWORD` | `secretAccessor`; `secretVersionManager` on `quote-service-hmac` |
 | **IAP buckets** | `storage.objectAdmin` on hub + apex tenant buckets |

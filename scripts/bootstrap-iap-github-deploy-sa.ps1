@@ -20,7 +20,8 @@ $ProjectRoles = @(
   "roles/cloudbuild.builds.editor",
   "roles/cloudsql.client",
   "roles/artifactregistry.writer",
-  "roles/serviceusage.serviceUsageConsumer"
+  "roles/serviceusage.serviceUsageConsumer",
+  "roles/logging.viewer"
 )
 
 Write-Host "`n=== Project IAM (Cloud Run deploy from source) ===" -ForegroundColor Cyan
