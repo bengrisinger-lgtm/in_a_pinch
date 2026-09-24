@@ -95,7 +95,7 @@ function band(available, total) {
   return 'good';
 }
 
-async function scoped(pool, req, opts = {}) {
+async function scoped(pool, req, opts = QUOTE_DML_ONLY) {
   const tenantId = hmacTenantId(req);
   const { schema } = await ensureQuoteTables(pool, tenantId, opts);
   return { tenantId, schema, db: wrapWithTenant(pool, tenantId) };

@@ -9,6 +9,7 @@ import { createServerClient } from '@securedbackend/sdk/server';
 import { createApp } from './src/app.js';
 import { createSquareRuntime } from './src/square.js';
 import { createCalendarRuntime } from './src/calendar.js';
+import { runQuoteStoreStartupMigration } from './src/startupMigrate.js';
 
 const REQUIRED = ['HMAC_SECRET', 'DB_HOST', 'DB_USER', 'DB_PASSWORD', 'DB_NAME'];
 for (const key of REQUIRED) {
@@ -65,6 +66,20 @@ const app = createApp({
 });
 
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => {
-  console.log(`quote-service listening on ${PORT}`);
+
+async function start() {
+  const tenantId = process.env.TENANT_ID || '';
+  const migrated = await runQuoteStoreStartupMigration(tenantId);
+  if (!migrated) {
+    console.error('FATAL: quote-store startup migration failed');
+    process.exit(1);
+  }
+  app.listen(PORT, () => {
+    console.log(`quote-service listening on ${PORT}`);
+  });
+}
+
+start().catch((err) => {
+  console.error('FATAL:', err);
+  process.exit(1);
 });

@@ -39,7 +39,7 @@ If `TF_VAR_gcp_project_id` is not already in the shell, the script loads `symlfy
 That script:
 
 1. Stages a Cloud Build context that vendors `@securedbackend/sdk` (the local `file:` path will not install in Cloud Build).
-2. Deploys Cloud Run with `{prefix}_app_runtime` + `RUNTIME_DB_PASSWORD`. **Does not** mount `COOKIE_SECRET`.
+2. Deploys Cloud Run with `{prefix}_app_runtime` + `RUNTIME_DB_PASSWORD`, and **`ADMIN_DB_PASSWORD` + `RESOURCE_PREFIX`** for a one-shot owner-role quote-store migration at startup (request paths are DML-only under FORCE RLS). **Does not** mount `COOKIE_SECRET`.
 3. `POST /auth/services` with `path_prefix` `/api/v1/quotes` and this tenant id.
 4. Stores the minted `hmac_secret` (once) in Secret Manager `quote-service-hmac`. Re-runs do not print it again.
 

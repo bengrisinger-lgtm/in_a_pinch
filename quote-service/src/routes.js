@@ -71,7 +71,7 @@ export function quoteRoutes(ctx) {
 
   async function scoped(req) {
     const tenantId = hmacTenantId(req);
-    const { schema } = await ensureQuoteTables(pool, tenantId);
+    const { schema } = await ensureQuoteTables(pool, tenantId, QUOTE_DML_ONLY);
     return { tenantId, schema, db: wrapWithTenant(pool, tenantId) };
   }
 
@@ -729,7 +729,7 @@ export function quoteRoutes(ctx) {
     const status = clip(req.body?.status, 32) || 'paid';
     const method = clip(req.body?.method, 40) || 'staff_recorded';
     try {
-      const schemaName = (await ensureQuoteTables(pool, tenantId)).schema;
+      const schemaName = (await ensureQuoteTables(pool, tenantId, QUOTE_DML_ONLY)).schema;
       if (status === 'paid') {
         const result = await withTenantTransaction(pool, tenantId, async (client) => {
           const quote = await client.query(
