@@ -50,15 +50,30 @@ Tenant **auth-service** (console login cookie fixes) lives in **`symlfy-baas`**,
 
 ## Quote-service deploy stuck on `00035-xmk` / `update-traffic`
 
-If Actions fails on **`update-traffic --to-latest`** with **failed to listen on PORT=8080** for a revision that is **not** serving prod, **LATEST** may point at a dead revision while traffic is still on the last **Ready** one (e.g. `quote-service-00034-rhw`). From PowerShell (project owner):
+**Symptom:** `latestCreatedRevisionName` is a failed revision (`quote-service-00035-xmk`) while **`latestReadyRevisionName` and 100% traffic stay on `quote-service-00034-rhw`**. Customers still hit **00034**; GitHub Actions and **`gcloud run services update-traffic`** fail because Cloud Run re-checks **latest created** (00035) whenever traffic uses **`latestRevision: true`**, even if you pass `--to-revisions=quote-service-00034-rhw=100`.
+
+**Check (PowerShell):**
 
 ```powershell
-gcloud run services update-traffic quote-service `
+gcloud run services describe quote-service `
   --project securedbackend-production --region us-central1 `
-  --to-revisions quote-service-00034-rhw=100
+  --format="yaml(status.latestReadyRevisionName,status.latestCreatedRevisionName,status.traffic)"
 ```
 
-Then merge the deploy-script fix that routes to **`latestReadyRevisionName`** only, and re-run **Deploy IAP quote-service**. Open the revision log URL from the error for the real startup `FATAL` line (migration/env), not the generic 8080 message.
+If traffic is already **`revisionName: quote-service-00034-rhw`** at **100%**, you do **not** need a traffic change for prod — skip `update-traffic`.
+
+**Unblock deploys:** delete the failed revision so `latestCreated` is no longer 00035:
+
+```powershell
+gcloud run revisions delete quote-service-00035-xmk `
+  --project securedbackend-production --region us-central1 --quiet
+```
+
+Re-run **describe**; `latestCreatedRevisionName` should match **00034-rhw** (or a new Ready revision after a deploy).
+
+Then merge **[PR #16](https://github.com/bengrisinger-lgtm/in_a_pinch/pull/16)** (traffic pinned to **ready** only, skip redundant startup migrate) and run **Deploy IAP quote-service**.
+
+**Why 00035 failed:** open the log URL from the error and search for `FATAL` / `quote-store startup` on revision **00035-xmk** (Postgres `code`, missing secret, etc.) — not the generic PORT=8080 line.
 
 ## PC scripts (optional)
 

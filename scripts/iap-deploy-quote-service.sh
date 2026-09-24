@@ -194,6 +194,36 @@ fi
 # Never use --to-latest when the newest *created* revision failed startup (e.g.
 # quote-service-00035-xmk): LATEST points at a not-Ready revision and update-traffic
 # fails before deploy runs (Actions run 36034029961). Pin to latestReadyRevisionName.
+revision_is_ready() {
+  local rev="$1"
+  [[ -z "$rev" ]] && return 1
+  local ready_status
+  ready_status="$(gcloud run revisions describe "$rev" \
+    --project="$PROJECT" --region="$REGION" \
+    --format=json 2>/dev/null | jq -r '.status.conditions[] | select(.type=="Ready") | .status' | head -1)"
+  [[ "$ready_status" == "True" ]]
+}
+
+# A failed latestCreated revision blocks update-traffic while traffic uses latestRevision.
+remove_stale_failed_latest_created() {
+  local ready created
+  ready="$(gcloud run services describe "$SERVICE_NAME" \
+    --project="$PROJECT" --region="$REGION" \
+    --format='value(status.latestReadyRevisionName)' 2>/dev/null || true)"
+  created="$(gcloud run services describe "$SERVICE_NAME" \
+    --project="$PROJECT" --region="$REGION" \
+    --format='value(status.latestCreatedRevisionName)' 2>/dev/null || true)"
+  if [[ -z "$created" || "$created" == "$ready" ]]; then
+    return 0
+  fi
+  if revision_is_ready "$created"; then
+    return 0
+  fi
+  echo "=== quote-service: deleting failed latest created revision (blocks traffic updates): $created ==="
+  gcloud run revisions delete "$created" \
+    --project="$PROJECT" --region="$REGION" --quiet
+}
+
 route_traffic_to_latest_ready() {
   local label="${1:-traffic}"
   local ready created
@@ -207,6 +237,10 @@ route_traffic_to_latest_ready() {
     echo "=== quote-service: no ready revision; skip traffic update ($label) ==="
     return 0
   fi
+  if [[ "$ready" == "$created" && "$label" == "pre-deploy" ]]; then
+    echo "=== quote-service: already 100% on ready latest ($ready); skip pre-deploy traffic ($label) ==="
+    return 0
+  fi
   echo "=== quote-service: route 100% to ready revision ($label): $ready (latest created: ${created:-n/a}) ==="
   gcloud run services update-traffic "$SERVICE_NAME" \
     --project="$PROJECT" \
@@ -215,6 +249,7 @@ route_traffic_to_latest_ready() {
     --quiet
 }
 
+remove_stale_failed_latest_created
 route_traffic_to_latest_ready "pre-deploy"
 
 echo "=== gcloud run deploy $SERVICE_NAME ==="
