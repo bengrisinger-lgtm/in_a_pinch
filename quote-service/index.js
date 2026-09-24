@@ -67,22 +67,16 @@ const app = createApp({
 
 const PORT = process.env.PORT || 8080;
 
-// Cloud Run requires the process to bind PORT before its startup timeout. Option 1
-// admin DDL can be slow or fail transiently — do not block listen or exit(1) here
-// (that surfaces as "failed to listen on PORT=8080" during update-traffic).
-const tenantId = process.env.TENANT_ID || '';
+async function start() {
+  const tenantId = process.env.TENANT_ID || '';
+  await runQuoteStoreStartupMigration(tenantId, pool);
 
-app.listen(PORT, () => {
-  console.log(`quote-service listening on ${PORT}`);
-  runQuoteStoreStartupMigration(tenantId, pool)
-    .then((ok) => {
-      if (!ok) {
-        console.error(
-          'quote-store startup migration failed (service still listening; SKU paths may 500 until fixed)'
-        );
-      }
-    })
-    .catch((err) => {
-      console.error('quote-store startup migration error:', err);
-    });
+  app.listen(PORT, () => {
+    console.log(`quote-service listening on ${PORT}`);
+  });
+}
+
+start().catch((err) => {
+  console.error('FATAL:', err);
+  process.exit(1);
 });
