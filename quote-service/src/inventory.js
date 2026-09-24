@@ -383,6 +383,9 @@ export function inventoryRoutes(ctx) {
         code: err?.code,
         message: err?.message,
         detail: err?.detail,
+        schema: err?.schema,
+        table: err?.table,
+        column: err?.column,
       });
       req.log?.error?.({ err }, 'sku list failed');
       res.status(500).json({ error: 'Failed to list skus' });

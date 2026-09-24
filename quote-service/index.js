@@ -69,7 +69,7 @@ const PORT = process.env.PORT || 8080;
 
 async function start() {
   const tenantId = process.env.TENANT_ID || '';
-  const migrated = await runQuoteStoreStartupMigration(tenantId);
+  const migrated = await runQuoteStoreStartupMigration(tenantId, pool);
   if (!migrated) {
     console.error('FATAL: quote-store startup migration failed');
     process.exit(1);

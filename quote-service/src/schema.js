@@ -228,16 +228,43 @@ export const HOLD_TTL_UNPAID_SIGNED_MINUTES = 1440;
 /** @deprecated use HOLD_TTL_CART_MINUTES — kept so old tests/imports fail loudly */
 export const HOLD_TTL_HOURS = HOLD_TTL_CART_MINUTES / 60;
 
-export async function expireStaleHolds(db, schema, tenantId) {
-  await db.query(
-    `UPDATE ${schema}.inventory_reservations
-        SET status = 'cancelled'
-      WHERE tenant_id = $1
-        AND status = 'held'
-        AND held_until IS NOT NULL
-        AND held_until <= now()`,
-    [tenantId]
+async function tenantTableHasColumn(db, schemaName, tableName, columnName) {
+  const { rows } = await db.query(
+    `SELECT 1 FROM information_schema.columns
+      WHERE table_schema = $1 AND table_name = $2 AND column_name = $3
+      LIMIT 1`,
+    [schemaName, tableName, columnName]
   );
+  return rows.length > 0;
+}
+
+/** Guest catalog runs DML-only; shims need owner startup migrate. Do not 500 on missing columns. */
+export async function expireStaleHolds(db, schema, tenantId) {
+  const schemaName = String(schema).replace(/^"/, '').replace(/"$/, '');
+  const hasReservations = await tenantTableHasColumn(
+    db,
+    schemaName,
+    'inventory_reservations',
+    'status'
+  );
+  if (!hasReservations) return;
+
+  if (await tenantTableHasColumn(db, schemaName, 'inventory_reservations', 'held_until')) {
+    await db.query(
+      `UPDATE ${schema}.inventory_reservations
+          SET status = 'cancelled'
+        WHERE tenant_id = $1
+          AND status = 'held'
+          AND held_until IS NOT NULL
+          AND held_until <= now()`,
+      [tenantId]
+    );
+  }
+
+  if (!(await tenantTableHasColumn(db, schemaName, 'inventory_reservations', 'quote_id'))) {
+    return;
+  }
+
   await db.query(
     `UPDATE ${schema}.quotes
         SET status = 'cancelled', updated_at = now()
