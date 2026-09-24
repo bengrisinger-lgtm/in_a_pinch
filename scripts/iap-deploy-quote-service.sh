@@ -148,6 +148,15 @@ if [[ "${QUOTE_SKIP_SECRET_IAM:-1}" != "1" ]]; then
     --quiet 2>/dev/null || true
 fi
 
+# Runtime SA must read ADMIN_DB_PASSWORD for startup owner migrate (terraform usually grants this).
+if [[ "${QUOTE_ENSURE_ADMIN_SECRET_IAM:-1}" == "1" ]]; then
+  gcloud secrets add-iam-policy-binding ADMIN_DB_PASSWORD \
+    --project="$PROJECT" \
+    --member "serviceAccount:$SERVICE_ACCOUNT" \
+    --role "roles/secretmanager.secretAccessor" \
+    --quiet 2>/dev/null || true
+fi
+
 CONSOLE_SERVICE_URL=""
 INTEGRATIONS_SERVICE_URL=""
 CONSOLE_SERVICE_URL="$(gcloud run services describe console-service --project="$PROJECT" --region="$REGION" --format='value(status.url)' 2>/dev/null || true)"

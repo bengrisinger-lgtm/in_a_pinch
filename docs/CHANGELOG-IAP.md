@@ -4,6 +4,7 @@ Platform-wide recurring patterns: **`symlfy-baas/RECURRING-BUG-CLASSES.md`**. Fe
 
 ## 2026-09-24
 
+- **Post–Option 1 SKU 500:** If startup migrate did not run (missing `ADMIN_DB_PASSWORD` / wrong `RESOURCE_PREFIX`) or revision failed on unique-index **23505**, guest catalog still 500'd — often **`expireStaleHolds`** referencing missing `quote_id` / `held_until`. Fix: derive prefix from `DB_USER`, fail startup when shims missing without admin, skip hold maintenance when columns absent, startup migrate with `ensureIndexes: false`.
 - **Option 1 (platform DDL, runtime DML):** quote-service runs **owner-role startup migration** (`ADMIN_DB_PASSWORD` + `RESOURCE_PREFIX`, `SET ROLE ${prefix}_app`) via `startupMigrate.js`; all HTTP handlers use `QUOTE_DML_ONLY`. Deploy mounts `ADMIN_DB_PASSWORD` (same pattern as docs-service). **Ship:** merge + **Actions → Deploy IAP quote-service**.
 
 ## 2026-09-23
