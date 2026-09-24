@@ -264,6 +264,14 @@ Write-Host "`n=== Deploying $ServiceName ===" -ForegroundColor Yellow
 Write-Host "  DB user: $SQL_USER (runtime, not frontend)" -ForegroundColor DarkGray
 Write-Host "  COOKIE_SECRET: not mounted" -ForegroundColor DarkGray
 
+Write-Host "  Resetting Cloud Run traffic to latest (clears manual / no-traffic mode)" -ForegroundColor DarkGray
+gcloud run services update-traffic $ServiceName `
+    --project $PROJECT `
+    --region $REGION `
+    --to-latest `
+    --quiet
+Assert-GcloudOk "gcloud run services update-traffic $ServiceName --to-latest"
+
 Push-Location $staging
 try {
     gcloud run deploy $ServiceName `
@@ -289,6 +297,13 @@ try {
 } finally {
     Pop-Location
 }
+
+gcloud run services update-traffic $ServiceName `
+    --project $PROJECT `
+    --region $REGION `
+    --to-latest `
+    --quiet
+Assert-GcloudOk "gcloud run services update-traffic $ServiceName --to-latest (post-deploy)"
 
 gcloud run services add-iam-policy-binding $ServiceName `
     --project $PROJECT `

@@ -191,6 +191,16 @@ if [[ -n "$INTEGRATIONS_SERVICE_URL" ]]; then
     --role "roles/run.invoker" --quiet 2>/dev/null || true
 fi
 
+# Cloud Run stays in manual traffic mode after a prior --no-traffic deploy; new
+# revisions then show "serving 0 percent" and prod keeps an old image (see run
+# 36011941433 vs 35946282181 in GitHub Actions). Reset before and after deploy.
+echo "=== gcloud run services update-traffic $SERVICE_NAME --to-latest (pre-deploy) ==="
+gcloud run services update-traffic "$SERVICE_NAME" \
+  --project="$PROJECT" \
+  --region="$REGION" \
+  --to-latest \
+  --quiet
+
 echo "=== gcloud run deploy $SERVICE_NAME ==="
 (
   cd "$STAGING"
@@ -214,6 +224,36 @@ echo "=== gcloud run deploy $SERVICE_NAME ==="
     --max-instances 10 \
     --timeout 60
 )
+
+echo "=== gcloud run services update-traffic $SERVICE_NAME --to-latest (post-deploy) ==="
+gcloud run services update-traffic "$SERVICE_NAME" \
+  --project="$PROJECT" \
+  --region="$REGION" \
+  --to-latest \
+  --quiet
+
+echo "=== quote-service traffic (must sum to 100% on one ready revision) ==="
+gcloud run services describe "$SERVICE_NAME" \
+  --project="$PROJECT" \
+  --region="$REGION" \
+  --format='yaml(status.latestReadyRevisionName,status.traffic)'
+
+echo "=== recent quote-service SKU / migration log lines (Cloud Logging) ==="
+LOG_FILTER='resource.type="cloud_run_revision"
+resource.labels.service_name="'"$SERVICE_NAME"'"
+(textPayload=~"sku list failed"
+ OR textPayload=~"quote-store startup"
+ OR textPayload=~"startup migration"
+ OR textPayload=~"42501"
+ OR textPayload=~"42703"
+ OR textPayload=~"must be owner"
+ OR jsonPayload.message=~"sku list failed")'
+gcloud logging read "$LOG_FILTER" \
+  --project="$PROJECT" \
+  --freshness=120m \
+  --limit=20 \
+  --format='json(timestamp,resource.labels.revision_name,textPayload,jsonPayload)' \
+  || echo "(logging read failed — deploy SA needs roles/logging.viewer)"
 
 gcloud run services add-iam-policy-binding "$SERVICE_NAME" \
   --project="$PROJECT" --region="$REGION" \
