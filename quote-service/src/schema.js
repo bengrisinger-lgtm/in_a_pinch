@@ -344,6 +344,33 @@ export async function ensureQuoteTables(db, tenantId) {
     `ALTER TABLE ${schema}.inventory_reservations ADD COLUMN IF NOT EXISTS load_out_time TIME`
   );
   await db.query(
+    `ALTER TABLE ${schema}.inventory_reservations ADD COLUMN IF NOT EXISTS sku_id UUID`
+  );
+  await db.query(
+    `ALTER TABLE ${schema}.inventory_reservations ADD COLUMN IF NOT EXISTS unit_id UUID`
+  );
+  await db.query(
+    `ALTER TABLE ${schema}.inventory_reservations ADD COLUMN IF NOT EXISTS starts_on DATE`
+  );
+  await db.query(
+    `ALTER TABLE ${schema}.inventory_reservations ADD COLUMN IF NOT EXISTS ends_on DATE`
+  );
+  await db.query(
+    `ALTER TABLE ${schema}.inventory_reservations ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'held'`
+  );
+  await db.query(
+    `ALTER TABLE ${schema}.inventory_skus ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT true`
+  );
+  await db.query(
+    `UPDATE ${schema}.inventory_skus SET active = true WHERE active IS NULL`
+  );
+  await db.query(
+    `ALTER TABLE ${schema}.inventory_units ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active'`
+  );
+  await db.query(
+    `UPDATE ${schema}.inventory_units SET status = 'active' WHERE status IS NULL`
+  );
+  await db.query(
     `CREATE UNIQUE INDEX IF NOT EXISTS inventory_categories_name_uidx
         ON ${schema}.inventory_categories (tenant_id, lower(name))`
   );
