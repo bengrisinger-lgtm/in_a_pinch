@@ -12,6 +12,8 @@ import {
   expireStaleHolds,
   extendCartHolds,
   HOLD_TTL_CART_MINUTES,
+  reservationBlockingClause,
+  skuCatalogSelectProjection,
 } from './schema.js';
 import { wrapWithTenant, withTenantTransaction } from './pool.js';
 import {
@@ -98,18 +100,20 @@ function band(available, total) {
 async function scoped(pool, req, opts = QUOTE_DML_ONLY) {
   const tenantId = hmacTenantId(req);
   const { schema } = await ensureQuoteTables(pool, tenantId, opts);
-  return { tenantId, schema, db: wrapWithTenant(pool, tenantId) };
+  const schemaName = schemaNameFromTenantId(tenantId);
+  const blocking = await reservationBlockingClause(pool, schemaName);
+  return { tenantId, schema, schemaName, blocking, db: wrapWithTenant(pool, tenantId) };
 }
 
 const UNIT_STATUSES = new Set(['active', 'retired']);
 
 /** Paid/held rows that still overlap today or later. Past bookings do not block retire. */
-async function futureBlocking(db, schema, { tenantId, unitId, skuId }) {
+async function futureBlocking(db, schema, blocking, { tenantId, unitId, skuId }) {
   if (unitId) {
     const { rows } = await db.query(
       `SELECT r.id FROM ${schema}.inventory_reservations r
         WHERE r.unit_id = $1 AND r.tenant_id = $2
-          AND ${BLOCKING}
+          AND ${blocking}
           AND r.ends_on >= CURRENT_DATE
         LIMIT 1`,
       [unitId, tenantId]
@@ -120,7 +124,7 @@ async function futureBlocking(db, schema, { tenantId, unitId, skuId }) {
     `SELECT r.id FROM ${schema}.inventory_reservations r
        JOIN ${schema}.inventory_units u ON u.id = r.unit_id
       WHERE u.sku_id = $1 AND r.tenant_id = $2
-        AND ${BLOCKING}
+        AND ${blocking}
         AND r.ends_on >= CURRENT_DATE
       LIMIT 1`,
     [skuId, tenantId]
@@ -332,10 +336,11 @@ export function inventoryRoutes(ctx) {
       }
     }
     try {
-      const { tenantId, schema, db } = await scoped(pool, req, QUOTE_DML_ONLY);
+      const { tenantId, schema, schemaName, blocking, db } = await scoped(pool, req, QUOTE_DML_ONLY);
       await expireStaleHolds(db, schema, tenantId);
+      const skuSelect = await skuCatalogSelectProjection(pool, schemaName);
       const { rows } = await db.query(
-        `SELECT s.id, s.name, s.category, s.description, s.image_url, s.daily_rate, s.active, s.created_at,
+        `SELECT ${skuSelect},
                 (SELECT count(*)::int FROM ${schema}.inventory_units u
                   WHERE u.sku_id = s.id AND u.status = 'active') AS units_total
            FROM ${schema}.inventory_skus s
@@ -350,7 +355,7 @@ export function inventoryRoutes(ctx) {
            FROM ${schema}.inventory_reservations r
            JOIN ${schema}.inventory_units u ON u.id = r.unit_id AND u.tenant_id = r.tenant_id
           WHERE r.tenant_id = $1
-            AND ${BLOCKING}
+            AND ${blocking}
             AND r.starts_on <= $3::date AND r.ends_on >= $2::date
           GROUP BY u.sku_id`,
         [tenantId, startsOn, endsOn]
@@ -518,7 +523,7 @@ export function inventoryRoutes(ctx) {
       return res.status(400).json({ error: 'no fields to update' });
     }
     try {
-      const { schema, db } = await scoped(pool, req);
+      const { schema, blocking, db } = await scoped(pool, req);
       if (Object.prototype.hasOwnProperty.call(req.body || {}, 'category') && !clearCategory) {
         const idx = setParts.findIndex((part) => part.startsWith('category ='));
         if (idx >= 0) {
@@ -526,7 +531,7 @@ export function inventoryRoutes(ctx) {
         }
       }
       if (req.body?.active === false) {
-        const clash = await futureBlocking(db, schema, { tenantId, skuId });
+        const clash = await futureBlocking(db, schema, blocking, { tenantId, skuId });
         if (clash) {
           return res.status(409).json({
             error: 'This SKU has a current or upcoming booking. Cancel that booking before hiding it.',
@@ -623,9 +628,9 @@ export function inventoryRoutes(ctx) {
       return res.status(400).json({ error: 'no fields to update' });
     }
     try {
-      const { schema, db } = await scoped(pool, req);
+      const { schema, blocking, db } = await scoped(pool, req);
       if (req.body?.status && String(req.body.status).trim().toLowerCase() === 'retired') {
-        const clash = await futureBlocking(db, schema, { tenantId, unitId });
+        const clash = await futureBlocking(db, schema, blocking, { tenantId, unitId });
         if (clash) {
           return res.status(409).json({
             error: 'This serial has a current or upcoming booking. Cancel that booking before retiring it.',
@@ -667,7 +672,7 @@ export function inventoryRoutes(ctx) {
       return res.status(400).json({ error: 'date range is too long' });
     }
     try {
-      const { schema, db } = await scoped(pool, req, QUOTE_DML_ONLY);
+      const { schema, blocking, db } = await scoped(pool, req, QUOTE_DML_ONLY);
       const sku = await db.query(
         `SELECT id, name FROM ${schema}.inventory_skus WHERE id = $1 AND tenant_id = $2`,
         [skuId, tenantId]
@@ -681,7 +686,7 @@ export function inventoryRoutes(ctx) {
                   SELECT 1 FROM ${schema}.inventory_reservations r
                    WHERE r.unit_id = u.id
                      AND r.tenant_id = $2
-                     AND ${BLOCKING}
+                     AND ${blocking}
                      AND r.starts_on <= $4::date
                      AND r.ends_on >= $3::date
                 ) AS available
@@ -723,7 +728,7 @@ export function inventoryRoutes(ctx) {
     const monthStart = isoDay(year, month - 1, 1);
     const monthEnd = isoDay(year, month, 0);
     try {
-      const { schema, db } = await scoped(pool, req, QUOTE_DML_ONLY);
+      const { schema, blocking, db } = await scoped(pool, req, QUOTE_DML_ONLY);
       await expireStaleHolds(db, schema, tenantId);
       const sku = await db.query(
         `SELECT id, name FROM ${schema}.inventory_skus WHERE id = $1 AND tenant_id = $2`,
@@ -743,7 +748,7 @@ export function inventoryRoutes(ctx) {
            FROM ${schema}.inventory_reservations r
            JOIN ${schema}.inventory_units u ON u.id = r.unit_id
           WHERE u.sku_id = $1 AND r.tenant_id = $2
-            AND (r.status = 'confirmed' OR (r.status = 'held' AND r.held_until > now()))
+            AND ${blocking}
             AND r.starts_on <= $4::date AND r.ends_on >= $3::date`,
         [skuId, tenantId, monthStart, monthEnd]
       );
@@ -827,7 +832,7 @@ export function inventoryRoutes(ctx) {
     }
 
     try {
-      const { schema, db } = await scoped(pool, req, QUOTE_DML_ONLY);
+      const { schema, blocking, db } = await scoped(pool, req, QUOTE_DML_ONLY);
       await expireStaleHolds(db, schema, tenantId);
       const created = await withTenantTransaction(pool, tenantId, async (client) => {
         let targets = [];
@@ -857,7 +862,7 @@ export function inventoryRoutes(ctx) {
             const clash = await client.query(
               `SELECT r.id FROM ${schema}.inventory_reservations r
                 WHERE r.unit_id = $1 AND r.tenant_id = $2
-                  AND ${BLOCKING}
+                  AND ${blocking}
                   AND r.starts_on <= $4::date AND r.ends_on >= $3::date
                 LIMIT 1`,
               [unit.id, tenantId, startsOn, endsOn]
@@ -879,7 +884,7 @@ export function inventoryRoutes(ctx) {
           const clash = await client.query(
             `SELECT r.id FROM ${schema}.inventory_reservations r
               WHERE r.unit_id = $1 AND r.tenant_id = $2
-                AND ${BLOCKING}
+                AND ${blocking}
                 AND r.starts_on <= $4::date AND r.ends_on >= $3::date
               LIMIT 1`,
             [unit.id, tenantId, startsOn, endsOn]
