@@ -33,11 +33,29 @@ jobs:
 
       - name: Recent sku list / ensureQuoteTables failures
         run: |
-          gcloud logging read \
-            'resource.type="cloud_run_revision"
-              resource.labels.service_name="quote-service"
-              (textPayload=~"sku list failed" OR textPayload=~"availability failed" OR jsonPayload.msg=~"sku list failed")' \
+          set -euo pipefail
+          FILTER='resource.type="cloud_run_revision"
+            resource.labels.service_name="quote-service"
+            (
+              textPayload=~"sku list failed"
+              OR textPayload=~"category list failed"
+              OR jsonPayload.msg=~"sku list failed"
+              OR jsonPayload.message=~"sku list failed"
+              OR jsonPayload.err.message=~"."
+              OR textPayload=~"42703"
+              OR textPayload=~"3F000"
+              OR textPayload=~"42501"
+              OR textPayload=~"23505"
+            )'
+          echo "=== quote-service inventory failures (last ${{ inputs.minutes }}m) ==="
+          gcloud logging read "$FILTER" \
             --project="${GCP_PROJECT}" \
             --freshness="${{ inputs.minutes }}m" \
-            --limit=10 \
-            --format='json(textPayload,jsonPayload,timestamp,resource.labels.revision_name)'
+            --limit=15 \
+            --format='json(textPayload,jsonPayload,timestamp,resource.labels.revision_name,labels)'
+
+          echo "=== Cloud Run revision traffic (quote-service) ==="
+          gcloud run services describe quote-service \
+            --project="${GCP_PROJECT}" \
+            --region=us-central1 \
+            --format='yaml(status.traffic,status.latestReadyRevisionName)'
