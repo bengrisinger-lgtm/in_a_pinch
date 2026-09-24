@@ -264,13 +264,62 @@ Write-Host "`n=== Deploying $ServiceName ===" -ForegroundColor Yellow
 Write-Host "  DB user: $SQL_USER (runtime, not frontend)" -ForegroundColor DarkGray
 Write-Host "  COOKIE_SECRET: not mounted" -ForegroundColor DarkGray
 
-Write-Host "  Resetting Cloud Run traffic to latest (clears manual / no-traffic mode)" -ForegroundColor DarkGray
-gcloud run services update-traffic $ServiceName `
-    --project $PROJECT `
-    --region $REGION `
-    --to-latest `
-    --quiet
-Assert-GcloudOk "gcloud run services update-traffic $ServiceName --to-latest"
+function Test-QuoteRevisionReady {
+    param([string]$Revision)
+    if (-not $Revision) { return $false }
+    $json = gcloud run revisions describe $Revision `
+        --project $PROJECT --region $REGION --format json 2>$null | ConvertFrom-Json
+    $ready = $json.status.conditions | Where-Object { $_.type -eq "Ready" } | Select-Object -First 1
+    return ($ready.status -eq "True")
+}
+
+function Invoke-QuoteSupersedeFailedLatestCreated {
+    $ready = (gcloud run services describe $ServiceName `
+        --project $PROJECT --region $REGION `
+        --format "value(status.latestReadyRevisionName)" 2>$null).Trim()
+    $created = (gcloud run services describe $ServiceName `
+        --project $PROJECT --region $REGION `
+        --format "value(status.latestCreatedRevisionName)" 2>$null).Trim()
+    if (-not $ready -or -not $created -or $created -eq $ready) { return }
+    if (Test-QuoteRevisionReady $created) { return }
+    $img = (gcloud run revisions describe $ready `
+        --project $PROJECT --region $REGION `
+        --format "value(spec.containers[0].image)" 2>$null).Trim()
+    if (-not $img) { throw "Cannot read container image from ready revision $ready" }
+    Write-Host "  Supersede failed latest created $created using image from $ready" -ForegroundColor Yellow
+    gcloud run deploy $ServiceName `
+        --project $PROJECT --region $REGION `
+        --image $img --no-traffic --quiet
+    Assert-GcloudOk "gcloud run deploy $ServiceName --image (supersede)"
+}
+
+function Set-QuoteServiceTrafficToLatestReady {
+    param([string]$Label)
+    $ready = (gcloud run services describe $ServiceName `
+        --project $PROJECT --region $REGION `
+        --format "value(status.latestReadyRevisionName)" 2>$null).Trim()
+    $created = (gcloud run services describe $ServiceName `
+        --project $PROJECT --region $REGION `
+        --format "value(status.latestCreatedRevisionName)" 2>$null).Trim()
+    if (-not $ready) {
+        Write-Host "  No ready revision; skip traffic update ($Label)" -ForegroundColor Yellow
+        return
+    }
+    if ($created -and $created -ne $ready -and -not (Test-QuoteRevisionReady $created)) {
+        Write-Host "  Skip traffic update ($Label): latest created $created is not Ready" -ForegroundColor Yellow
+        return
+    }
+    Write-Host "  Route 100% to ready revision ($Label): $ready (latest created: $created)" -ForegroundColor DarkGray
+    gcloud run services update-traffic $ServiceName `
+        --project $PROJECT `
+        --region $REGION `
+        --to-revisions "${ready}=100" `
+        --quiet
+    Assert-GcloudOk "gcloud run services update-traffic $ServiceName --to-revisions ${ready}=100 ($Label)"
+}
+
+Invoke-QuoteSupersedeFailedLatestCreated
+Set-QuoteServiceTrafficToLatestReady -Label "pre-deploy"
 
 Push-Location $staging
 try {
@@ -298,12 +347,7 @@ try {
     Pop-Location
 }
 
-gcloud run services update-traffic $ServiceName `
-    --project $PROJECT `
-    --region $REGION `
-    --to-latest `
-    --quiet
-Assert-GcloudOk "gcloud run services update-traffic $ServiceName --to-latest (post-deploy)"
+Set-QuoteServiceTrafficToLatestReady -Label "post-deploy"
 
 gcloud run services add-iam-policy-binding $ServiceName `
     --project $PROJECT `

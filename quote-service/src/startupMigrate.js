@@ -88,6 +88,11 @@ export async function runQuoteStoreStartupMigration(tenantId, runtimePool) {
     ? await quoteStoreNeedsOwnerMigrate(runtimePool, tenantId)
     : true;
 
+  if (!needsMigrate) {
+    console.info('quote-store startup migration skipped: §1 columns already present');
+    return;
+  }
+
   if (!process.env.ADMIN_DB_PASSWORD) {
     if (needsMigrate) {
       throw new Error(

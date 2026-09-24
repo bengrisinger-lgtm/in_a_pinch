@@ -191,17 +191,85 @@ if [[ -n "$INTEGRATIONS_SERVICE_URL" ]]; then
     --role "roles/run.invoker" --quiet 2>/dev/null || true
 fi
 
-# Cloud Run stays in manual traffic mode after a prior --no-traffic deploy; new
-# revisions then show "serving 0 percent" and prod keeps an old image (see run
-# 36011941433 vs 35946282181 in GitHub Actions). Reset before and after deploy.
-echo "=== gcloud run services update-traffic $SERVICE_NAME --to-latest (pre-deploy) ==="
-gcloud run services update-traffic "$SERVICE_NAME" \
-  --project="$PROJECT" \
-  --region="$REGION" \
-  --to-latest \
-  --quiet
+# Never use --to-latest when the newest *created* revision failed startup (e.g.
+# quote-service-00035-xmk): LATEST points at a not-Ready revision and update-traffic
+# fails before deploy runs (Actions run 36034029961). Pin to latestReadyRevisionName.
+revision_is_ready() {
+  local rev="$1"
+  [[ -z "$rev" ]] && return 1
+  local ready_status
+  ready_status="$(gcloud run revisions describe "$rev" \
+    --project="$PROJECT" --region="$REGION" \
+    --format=json 2>/dev/null | jq -r '.status.conditions[] | select(.type=="Ready") | .status' | head -1)"
+  [[ "$ready_status" == "True" ]]
+}
 
-echo "=== gcloud run deploy $SERVICE_NAME ==="
+# Latest *created* revision cannot be deleted (FAILED_PRECONDITION). Supersede it by
+# deploying the same container image as latestReady with --no-traffic.
+supersede_failed_latest_created() {
+  local ready created img
+  ready="$(gcloud run services describe "$SERVICE_NAME" \
+    --project="$PROJECT" --region="$REGION" \
+    --format='value(status.latestReadyRevisionName)' 2>/dev/null || true)"
+  created="$(gcloud run services describe "$SERVICE_NAME" \
+    --project="$PROJECT" --region="$REGION" \
+    --format='value(status.latestCreatedRevisionName)' 2>/dev/null || true)"
+  if [[ -z "$ready" || -z "$created" || "$created" == "$ready" ]]; then
+    return 0
+  fi
+  if revision_is_ready "$created"; then
+    return 0
+  fi
+  img="$(gcloud run revisions describe "$ready" \
+    --project="$PROJECT" --region="$REGION" \
+    --format='value(spec.containers[0].image)' 2>/dev/null || true)"
+  if [[ -z "$img" ]]; then
+    echo "ERROR: cannot read image from ready revision $ready" >&2
+    return 1
+  fi
+  echo "=== quote-service: supersede failed latest created $created using image from $ready ==="
+  echo "    image: $img"
+  gcloud run deploy "$SERVICE_NAME" \
+    --project="$PROJECT" \
+    --region="$REGION" \
+    --image="$img" \
+    --no-traffic \
+    --quiet
+}
+
+route_traffic_to_latest_ready() {
+  local label="${1:-traffic}"
+  local ready created
+  ready="$(gcloud run services describe "$SERVICE_NAME" \
+    --project="$PROJECT" --region="$REGION" \
+    --format='value(status.latestReadyRevisionName)' 2>/dev/null || true)"
+  created="$(gcloud run services describe "$SERVICE_NAME" \
+    --project="$PROJECT" --region="$REGION" \
+    --format='value(status.latestCreatedRevisionName)' 2>/dev/null || true)"
+  if [[ -z "$ready" ]]; then
+    echo "=== quote-service: no ready revision; skip traffic update ($label) ==="
+    return 0
+  fi
+  if [[ -n "$created" && "$created" != "$ready" ]] && ! revision_is_ready "$created"; then
+    echo "=== quote-service: skip traffic update ($label): latest created $created is not Ready ==="
+    return 0
+  fi
+  if [[ "$ready" == "$created" && "$label" == "pre-deploy" ]]; then
+    echo "=== quote-service: already 100% on ready latest ($ready); skip pre-deploy traffic ($label) ==="
+    return 0
+  fi
+  echo "=== quote-service: route 100% to ready revision ($label): $ready (latest created: ${created:-n/a}) ==="
+  gcloud run services update-traffic "$SERVICE_NAME" \
+    --project="$PROJECT" \
+    --region="$REGION" \
+    --to-revisions="${ready}=100" \
+    --quiet
+}
+
+supersede_failed_latest_created
+route_traffic_to_latest_ready "pre-deploy"
+
+echo "=== gcloud run deploy $SERVICE_NAME (no-traffic until revision is Ready) ==="
 (
   cd "$STAGING"
   gcloud run deploy "$SERVICE_NAME" \
@@ -209,6 +277,7 @@ echo "=== gcloud run deploy $SERVICE_NAME ==="
     --project "$PROJECT" \
     --region "$REGION" \
     --platform managed \
+    --no-traffic \
     --no-allow-unauthenticated \
     --ingress internal-and-cloud-load-balancing \
     --service-account "$SERVICE_ACCOUNT" \
@@ -225,12 +294,21 @@ echo "=== gcloud run deploy $SERVICE_NAME ==="
     --timeout 60
 )
 
-echo "=== gcloud run services update-traffic $SERVICE_NAME --to-latest (post-deploy) ==="
-gcloud run services update-traffic "$SERVICE_NAME" \
-  --project="$PROJECT" \
-  --region="$REGION" \
-  --to-latest \
-  --quiet
+NEW_CREATED="$(gcloud run services describe "$SERVICE_NAME" \
+  --project="$PROJECT" --region="$REGION" \
+  --format='value(status.latestCreatedRevisionName)' 2>/dev/null || true)"
+if revision_is_ready "$NEW_CREATED"; then
+  echo "=== quote-service: new revision Ready: $NEW_CREATED — routing traffic ==="
+  gcloud run services update-traffic "$SERVICE_NAME" \
+    --project="$PROJECT" \
+    --region="$REGION" \
+    --to-revisions="${NEW_CREATED}=100" \
+    --quiet
+else
+  echo "ERROR: deploy created $NEW_CREATED but it is not Ready; prod traffic unchanged on latest ready revision." >&2
+  route_traffic_to_latest_ready "post-deploy-keep-ready"
+  exit 1
+fi
 
 echo "=== quote-service traffic (must sum to 100% on one ready revision) ==="
 gcloud run services describe "$SERVICE_NAME" \
