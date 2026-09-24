@@ -269,43 +269,55 @@ export async function skuCatalogSelectProjection(db, schemaName) {
 /** Guest catalog runs DML-only; shims need owner startup migrate. Do not 500 on missing columns. */
 export async function expireStaleHolds(db, schema, tenantId) {
   const schemaName = String(schema).replace(/^"/, '').replace(/"$/, '');
-  const hasReservations = await tenantTableHasColumn(
-    db,
-    schemaName,
-    'inventory_reservations',
-    'status'
-  );
-  if (!hasReservations) return;
+  try {
+    const hasReservations = await tenantTableHasColumn(
+      db,
+      schemaName,
+      'inventory_reservations',
+      'status'
+    );
+    if (!hasReservations) return;
 
-  if (await tenantTableHasColumn(db, schemaName, 'inventory_reservations', 'held_until')) {
+    if (await tenantTableHasColumn(db, schemaName, 'inventory_reservations', 'held_until')) {
+      await db.query(
+        `UPDATE ${schema}.inventory_reservations
+            SET status = 'cancelled'
+          WHERE tenant_id = $1
+            AND status = 'held'
+            AND held_until IS NOT NULL
+            AND held_until <= now()`,
+        [tenantId]
+      );
+    }
+
+    if (!(await tenantTableHasColumn(db, schemaName, 'inventory_reservations', 'quote_id'))) {
+      return;
+    }
+
     await db.query(
-      `UPDATE ${schema}.inventory_reservations
-          SET status = 'cancelled'
+      `UPDATE ${schema}.quotes
+          SET status = 'cancelled', updated_at = now()
         WHERE tenant_id = $1
-          AND status = 'held'
-          AND held_until IS NOT NULL
-          AND held_until <= now()`,
+          AND status NOT IN ('paid', 'cancelled', 'refunded')
+          AND id IN (
+            SELECT quote_id FROM ${schema}.inventory_reservations
+             WHERE tenant_id = $1 AND quote_id IS NOT NULL
+             GROUP BY quote_id
+            HAVING bool_and(status = 'cancelled')
+          )`,
       [tenantId]
     );
+  } catch (err) {
+    // Guest catalog must not 500 when runtime cannot UPDATE owner-owned rows (42501).
+    if (err?.code === '42501') {
+      console.warn('expireStaleHolds skipped (insufficient privilege)', {
+        code: err.code,
+        message: err.message || String(err),
+      });
+      return;
+    }
+    throw err;
   }
-
-  if (!(await tenantTableHasColumn(db, schemaName, 'inventory_reservations', 'quote_id'))) {
-    return;
-  }
-
-  await db.query(
-    `UPDATE ${schema}.quotes
-        SET status = 'cancelled', updated_at = now()
-      WHERE tenant_id = $1
-        AND status NOT IN ('paid', 'cancelled', 'refunded')
-        AND id IN (
-          SELECT quote_id FROM ${schema}.inventory_reservations
-           WHERE tenant_id = $1 AND quote_id IS NOT NULL
-           GROUP BY quote_id
-          HAVING bool_and(status = 'cancelled')
-        )`,
-    [tenantId]
-  );
 }
 
 export async function extendQuoteHolds(db, schema, tenantId, quoteId, minutes) {
@@ -382,8 +394,8 @@ async function currentRoleOwnsTable(db, schemaName, tableName) {
       WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind = 'r'`,
     [schemaName, tableName]
   );
-  // No catalog row (common in unit mocks right after CREATE TABLE IF NOT EXISTS).
-  if (!rows[0]) return true;
+  // Missing pg_class row means runtime is not owner (console normalized ownership).
+  if (!rows[0]) return false;
   return rows[0].owns === true;
 }
 
@@ -419,7 +431,7 @@ async function forceRls(db, qualified, tableName, schemaName) {
 export const QUOTE_DML_ONLY = { ddlMode: 'dml-only' };
 
 /** Safe on owner-owned tables when runtime has UPDATE (no ALTER / policy DDL). */
-async function runSafeDmlMaintenance(db, schema) {
+export async function runSafeDmlMaintenance(db, schema) {
   try {
     await db.query(
       `UPDATE ${schema}.inventory_skus SET active = true WHERE active IS NULL`

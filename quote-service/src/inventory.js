@@ -14,6 +14,7 @@ import {
   HOLD_TTL_CART_MINUTES,
   reservationBlockingClause,
   skuCatalogSelectProjection,
+  runSafeDmlMaintenance,
 } from './schema.js';
 import { wrapWithTenant, withTenantTransaction } from './pool.js';
 import {
@@ -22,7 +23,7 @@ import {
   categoryStockPrefix,
   normalizeStockPrefix,
 } from './stockCodes.js';
-import { actorUserId } from './auth.js';
+import { actorUserId, isStaffIdentity } from './auth.js';
 import {
   clipName,
   listCategories,
@@ -99,10 +100,19 @@ function band(available, total) {
 
 async function scoped(pool, req, opts = QUOTE_DML_ONLY) {
   const tenantId = hmacTenantId(req);
-  const { schema } = await ensureQuoteTables(pool, tenantId, opts);
   const schemaName = schemaNameFromTenantId(tenantId);
+  let schema;
+  const db = wrapWithTenant(pool, tenantId);
+  if (opts?.ddlMode === 'dml-only') {
+    schema = schemaName;
+    if (isStaffIdentity(req?.identity)) {
+      await runSafeDmlMaintenance(db, schema);
+    }
+  } else {
+    ({ schema } = await ensureQuoteTables(pool, tenantId, opts));
+  }
   const blocking = await reservationBlockingClause(pool, schemaName);
-  return { tenantId, schema, schemaName, blocking, db: wrapWithTenant(pool, tenantId) };
+  return { tenantId, schema, schemaName, blocking, db };
 }
 
 const UNIT_STATUSES = new Set(['active', 'retired']);
@@ -384,14 +394,16 @@ export function inventoryRoutes(ctx) {
         schema,
       });
     } catch (err) {
-      console.error('sku list failed', {
-        code: err?.code,
-        message: err?.message,
-        detail: err?.detail,
-        schema: err?.schema,
-        table: err?.table,
-        column: err?.column,
-      });
+      console.error(
+        'sku list failed',
+        JSON.stringify({
+          code: err?.code,
+          message: err?.message,
+          detail: err?.detail,
+          table: err?.table,
+          column: err?.column,
+        })
+      );
       req.log?.error?.({ err }, 'sku list failed');
       res.status(500).json({ error: 'Failed to list skus' });
     }

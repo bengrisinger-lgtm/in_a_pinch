@@ -309,7 +309,20 @@ describe('ensureQuoteTables', () => {
     const calls = [];
     const db = {
       async query(sql) {
-        calls.push(String(sql).replace(/\s+/g, ' ').trim());
+        const compact = String(sql).replace(/\s+/g, ' ').trim();
+        calls.push(compact);
+        if (compact.includes('pg_get_userbyid')) {
+          return { rows: [{ owns: true }] };
+        }
+        if (compact.includes('relrowsecurity')) {
+          return { rows: [{ rls: false, forced: false }] };
+        }
+        if (compact.includes('pg_policies')) {
+          return { rows: [] };
+        }
+        if (compact.includes('information_schema.tables')) {
+          return { rows: [] };
+        }
         return { rows: [] };
       },
     };

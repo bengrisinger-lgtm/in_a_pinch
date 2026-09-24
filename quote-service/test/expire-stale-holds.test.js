@@ -46,4 +46,18 @@ describe('expireStaleHolds', () => {
     assert.equal(db.calls.length, 1);
     assert.match(db.calls[0].sql, /inventory_reservations/);
   });
+
+  it('does not throw on 42501 (guest catalog must keep reading SKUs)', async () => {
+    const db = mockDb();
+    db.query = async (sql) => {
+      const s = String(sql);
+      if (s.includes('information_schema.columns')) {
+        return { rows: [{ '1': 1 }] };
+      }
+      const err = new Error('permission denied for table quotes');
+      err.code = '42501';
+      throw err;
+    };
+    await expireStaleHolds(db, SCHEMA, TENANT);
+  });
 });
