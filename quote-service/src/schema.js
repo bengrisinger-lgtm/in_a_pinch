@@ -320,8 +320,14 @@ async function forceRls(db, qualified, table) {
 /**
  * Create quote-store tables in the HMAC tenant's schema and FORCE RLS
  * immediately. Does not CREATE SCHEMA (platform ensureTenantSchema does).
+ *
+ * @param {{ ensureIndexes?: boolean }} [opts]
+ *   When false, skip CREATE UNIQUE INDEX on the hot path (guest catalog/checkout).
+ *   Indexes still run on staff write paths. Avoids bricking reads when legacy rows
+ *   violate a new unique index (Postgres 23505) until data is deduped offline.
  */
-export async function ensureQuoteTables(db, tenantId) {
+export async function ensureQuoteTables(db, tenantId, opts = {}) {
+  const ensureIndexes = opts.ensureIndexes !== false;
   const schema = qIdent(schemaNameFromTenantId(tenantId));
   for (const table of TABLES) {
     const name = qIdent(table.name);
@@ -371,10 +377,6 @@ export async function ensureQuoteTables(db, tenantId) {
     `UPDATE ${schema}.inventory_units SET status = 'active' WHERE status IS NULL`
   );
   await db.query(
-    `CREATE UNIQUE INDEX IF NOT EXISTS inventory_categories_name_uidx
-        ON ${schema}.inventory_categories (tenant_id, lower(name))`
-  );
-  await db.query(
     `ALTER TABLE ${schema}.inventory_skus
         ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`
   );
@@ -392,24 +394,6 @@ export async function ensureQuoteTables(db, tenantId) {
   await db.query(
     `ALTER TABLE ${schema}.inventory_units ADD COLUMN IF NOT EXISTS stock_code TEXT`
   );
-  await db.query(
-    `CREATE UNIQUE INDEX IF NOT EXISTS inventory_units_stock_code_uidx
-        ON ${schema}.inventory_units (tenant_id, stock_code)
-      WHERE stock_code IS NOT NULL`
-  );
-  await db.query(
-    `CREATE UNIQUE INDEX IF NOT EXISTS inventory_categories_stock_prefix_uidx
-        ON ${schema}.inventory_categories (tenant_id, lower(stock_prefix))
-      WHERE stock_prefix IS NOT NULL`
-  );
-  await db.query(
-    `CREATE INDEX IF NOT EXISTS inventory_units_sku_idx ON ${schema}.inventory_units (sku_id)`
-  );
-  await db.query(
-    `CREATE INDEX IF NOT EXISTS inventory_reservations_unit_idx ON ${schema}.inventory_reservations (unit_id, starts_on, ends_on)`
-  );
-  // Existing IAP schemas were created before checkout columns. ADD IF NOT
-  // EXISTS is a no-op on a fresh CREATE TABLE that already has them.
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS fulfillment TEXT`);
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS event_type TEXT`);
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS starts_on DATE`);
@@ -426,10 +410,6 @@ export async function ensureQuoteTables(db, tenantId) {
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS payment_link_url TEXT`);
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS payment_link_id TEXT`);
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS square_order_id TEXT`);
-  await db.query(
-    `CREATE UNIQUE INDEX IF NOT EXISTS customers_tenant_email_uidx
-        ON ${schema}.customers (tenant_id, lower(email))`
-  );
   await db.query(
     `ALTER TABLE ${schema}.customers ADD COLUMN IF NOT EXISTS first_name TEXT`
   );
@@ -449,6 +429,33 @@ export async function ensureQuoteTables(db, tenantId) {
         SET first_name = name, last_name = ''
       WHERE (first_name IS NULL OR first_name = '')
         AND name IS NOT NULL`
+  );
+  if (!ensureIndexes) {
+    return { schema, tables: TABLES.map((t) => t.name) };
+  }
+  await db.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS inventory_categories_name_uidx
+        ON ${schema}.inventory_categories (tenant_id, lower(name))`
+  );
+  await db.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS inventory_units_stock_code_uidx
+        ON ${schema}.inventory_units (tenant_id, stock_code)
+      WHERE stock_code IS NOT NULL`
+  );
+  await db.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS inventory_categories_stock_prefix_uidx
+        ON ${schema}.inventory_categories (tenant_id, lower(stock_prefix))
+      WHERE stock_prefix IS NOT NULL`
+  );
+  await db.query(
+    `CREATE INDEX IF NOT EXISTS inventory_units_sku_idx ON ${schema}.inventory_units (sku_id)`
+  );
+  await db.query(
+    `CREATE INDEX IF NOT EXISTS inventory_reservations_unit_idx ON ${schema}.inventory_reservations (unit_id, starts_on, ends_on)`
+  );
+  await db.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS customers_tenant_email_uidx
+        ON ${schema}.customers (tenant_id, lower(email))`
   );
   await db.query(
     `CREATE UNIQUE INDEX IF NOT EXISTS staff_members_tenant_email_uidx
