@@ -292,6 +292,19 @@ describe('quote store HMAC scope', () => {
 });
 
 describe('ensureQuoteTables', () => {
+  it('ddlMode dml-only issues no DDL', async () => {
+    const calls = [];
+    const db = {
+      async query(sql) {
+        calls.push(String(sql));
+        return { rows: [] };
+      },
+    };
+    const { schema } = await ensureQuoteTables(db, TENANT_A, { ddlMode: 'dml-only' });
+    assert.equal(schema, SCHEMA_A);
+    assert.ok(!calls.some((c) => /CREATE TABLE|ALTER TABLE|CREATE POLICY|CREATE INDEX/i.test(c)));
+  });
+
   it('FORCE RLS on customers quotes line items payments in t_<hex>', async () => {
     const calls = [];
     const db = {
