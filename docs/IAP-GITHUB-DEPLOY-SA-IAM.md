@@ -46,7 +46,8 @@ The deploy SA must **`iam.serviceAccounts.actAs`** every identity Cloud Run / Cl
 |-----------------|-------------------|-----|
 | **`backend-backend-sa@…`** (runtime / Cloud Run identity) | `roles/iam.serviceAccountUser` | Service runs as this SA |
 | **`248381849073-compute@developer.gserviceaccount.com`** | `roles/iam.serviceAccountUser` | Default **build** SA for `--source` (error: *caller does not have permission to act as service account …104288244146164866320*) |
-| **`248381849073@cloudbuild.gserviceaccount.com`** | `roles/iam.serviceAccountUser` | Legacy Cloud Build SA (if project still uses it) |
+
+Older projects may also use **`PROJECT_NUMBER@cloudbuild.gserviceaccount.com`**; if `gcloud` reports **NOT_FOUND**, skip it — this project uses the **compute default** SA only.
 
 Resolve numeric ID → email:
 

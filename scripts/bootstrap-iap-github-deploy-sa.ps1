@@ -45,12 +45,9 @@ foreach ($Role in $ProjectRoles) {
   ) "projects add-iam-policy-binding $Role"
 }
 
-$ActAsTargets = @(
-  $RuntimeSa
-  "${ProjectNumber}-compute@developer.gserviceaccount.com"
-  "${ProjectNumber}@cloudbuild.gserviceaccount.com"
-)
-Write-Host "`n=== Deploy SA may actAs runtime + Cloud Build SAs ===" -ForegroundColor Cyan
+$ComputeBuildSa = "${ProjectNumber}-compute@developer.gserviceaccount.com"
+$ActAsTargets = @($RuntimeSa, $ComputeBuildSa)
+Write-Host "`n=== Deploy SA may actAs runtime + default Cloud Build SA ===" -ForegroundColor Cyan
 foreach ($Target in $ActAsTargets) {
   Write-Host "  serviceAccountUser: $Target"
   Invoke-GcloudOk @(

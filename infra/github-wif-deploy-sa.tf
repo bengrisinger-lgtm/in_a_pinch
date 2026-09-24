@@ -46,7 +46,6 @@ locals {
   act_as_sa_emails = [
     var.runtime_sa_email,
     "${var.project_number}-compute@developer.gserviceaccount.com",
-    "${var.project_number}@cloudbuild.gserviceaccount.com",
   ]
 }
 
