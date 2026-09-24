@@ -23,7 +23,17 @@ Typical IAP recovery order after merging to `main`:
 1. **Deploy IAP quote-service** (unblocks API/catalog).
 2. **Deploy IAP storefront** → target **both** (optional: enable **build_console_overlay** if Vault changed).
 
-## Cloud Agent (same scripts)
+## GrizzTeam PC (PowerShell — your normal path)
+
+```powershell
+cd D:\GrizzTeam_Application\micro-applications\in-a-pinch\quote-service
+.\deploy.ps1 -TenantId 987bcdaf-320d-46bf-bfb3-4bdcdffe1de1
+
+cd ..\storefront
+.\deploy.ps1 -Build
+```
+
+## Cloud Agent / Linux only (bash)
 
 After environment install (`scripts/cloud-agent-install.sh`):
 

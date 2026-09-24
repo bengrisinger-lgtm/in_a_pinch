@@ -1,5 +1,7 @@
 # IAP deploy: local PC vs GitHub Actions / Cloud Agent
 
+**GrizzTeam PC = PowerShell only.** Use `storefront\deploy.ps1`, `quote-service\deploy.ps1`, and `gcloud` from **PowerShell**. Doc blocks labeled **bash** are for **GitHub Actions / Linux Cloud Agents** — not for copy-paste on your machine.
+
 Your machine uses a **parent folder** layout (see `storefront/package.json`):
 
 ```text
