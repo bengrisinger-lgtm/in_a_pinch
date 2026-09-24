@@ -1,0 +1,43 @@
+# One-shot: read quote-service Cloud Run logs for inventory failures (WIF).
+name: Diagnose quote-service SKU logs
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: Look back N minutes
+        required: false
+        default: "120"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT: securedbackend-production
+  GCP_WIF_PROVIDER: projects/248381849073/locations/global/workloadIdentityPools/iap-cloud-agent-1/providers/github
+  GCP_SERVICE_ACCOUNT: iap-cloud-agent-deploy@securedbackend-production.iam.gserviceaccount.com
+
+jobs:
+  logs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Recent sku list / ensureQuoteTables failures
+        run: |
+          gcloud logging read \
+            'resource.type="cloud_run_revision"
+              resource.labels.service_name="quote-service"
+              (textPayload=~"sku list failed" OR textPayload=~"availability failed" OR jsonPayload.msg=~"sku list failed")' \
+            --project="${GCP_PROJECT}" \
+            --freshness="${{ inputs.minutes }}m" \
+            --limit=10 \
+            --format='json(textPayload,jsonPayload,timestamp,resource.labels.revision_name)'
