@@ -191,15 +191,31 @@ if [[ -n "$INTEGRATIONS_SERVICE_URL" ]]; then
     --role "roles/run.invoker" --quiet 2>/dev/null || true
 fi
 
-# Cloud Run stays in manual traffic mode after a prior --no-traffic deploy; new
-# revisions then show "serving 0 percent" and prod keeps an old image (see run
-# 36011941433 vs 35946282181 in GitHub Actions). Reset before and after deploy.
-echo "=== gcloud run services update-traffic $SERVICE_NAME --to-latest (pre-deploy) ==="
-gcloud run services update-traffic "$SERVICE_NAME" \
-  --project="$PROJECT" \
-  --region="$REGION" \
-  --to-latest \
-  --quiet
+# Never use --to-latest when the newest *created* revision failed startup (e.g.
+# quote-service-00035-xmk): LATEST points at a not-Ready revision and update-traffic
+# fails before deploy runs (Actions run 36034029961). Pin to latestReadyRevisionName.
+route_traffic_to_latest_ready() {
+  local label="${1:-traffic}"
+  local ready created
+  ready="$(gcloud run services describe "$SERVICE_NAME" \
+    --project="$PROJECT" --region="$REGION" \
+    --format='value(status.latestReadyRevisionName)' 2>/dev/null || true)"
+  created="$(gcloud run services describe "$SERVICE_NAME" \
+    --project="$PROJECT" --region="$REGION" \
+    --format='value(status.latestCreatedRevisionName)' 2>/dev/null || true)"
+  if [[ -z "$ready" ]]; then
+    echo "=== quote-service: no ready revision; skip traffic update ($label) ==="
+    return 0
+  fi
+  echo "=== quote-service: route 100% to ready revision ($label): $ready (latest created: ${created:-n/a}) ==="
+  gcloud run services update-traffic "$SERVICE_NAME" \
+    --project="$PROJECT" \
+    --region="$REGION" \
+    --to-revisions="${ready}=100" \
+    --quiet
+}
+
+route_traffic_to_latest_ready "pre-deploy"
 
 echo "=== gcloud run deploy $SERVICE_NAME ==="
 (
@@ -225,12 +241,7 @@ echo "=== gcloud run deploy $SERVICE_NAME ==="
     --timeout 60
 )
 
-echo "=== gcloud run services update-traffic $SERVICE_NAME --to-latest (post-deploy) ==="
-gcloud run services update-traffic "$SERVICE_NAME" \
-  --project="$PROJECT" \
-  --region="$REGION" \
-  --to-latest \
-  --quiet
+route_traffic_to_latest_ready "post-deploy"
 
 echo "=== quote-service traffic (must sum to 100% on one ready revision) ==="
 gcloud run services describe "$SERVICE_NAME" \

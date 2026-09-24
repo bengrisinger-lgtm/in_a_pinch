@@ -48,6 +48,18 @@ Requires **`GCP_SA_KEY_JSON`** on the agent environment with the same IAM as WIF
 
 Tenant **auth-service** (console login cookie fixes) lives in **`symlfy-baas`**, not this repo. Deploy **`auth-service`** from platform `deploy.ps1` or add a matching GitHub workflow in `symlfy-baas` — IAP workflows here do not redeploy platform auth.
 
+## Quote-service deploy stuck on `00035-xmk` / `update-traffic`
+
+If Actions fails on **`update-traffic --to-latest`** with **failed to listen on PORT=8080** for a revision that is **not** serving prod, **LATEST** may point at a dead revision while traffic is still on the last **Ready** one (e.g. `quote-service-00034-rhw`). From PowerShell (project owner):
+
+```powershell
+gcloud run services update-traffic quote-service `
+  --project securedbackend-production --region us-central1 `
+  --to-revisions quote-service-00034-rhw=100
+```
+
+Then merge the deploy-script fix that routes to **`latestReadyRevisionName`** only, and re-run **Deploy IAP quote-service**. Open the revision log URL from the error for the real startup `FATAL` line (migration/env), not the generic 8080 message.
+
 ## PC scripts (optional)
 
 `storefront/deploy.ps1` and `quote-service/deploy.ps1` remain for GrizzTeam layout parity; they are **not** required for production if WIF + Actions are configured.

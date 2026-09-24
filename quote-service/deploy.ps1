@@ -264,13 +264,29 @@ Write-Host "`n=== Deploying $ServiceName ===" -ForegroundColor Yellow
 Write-Host "  DB user: $SQL_USER (runtime, not frontend)" -ForegroundColor DarkGray
 Write-Host "  COOKIE_SECRET: not mounted" -ForegroundColor DarkGray
 
-Write-Host "  Resetting Cloud Run traffic to latest (clears manual / no-traffic mode)" -ForegroundColor DarkGray
-gcloud run services update-traffic $ServiceName `
-    --project $PROJECT `
-    --region $REGION `
-    --to-latest `
-    --quiet
-Assert-GcloudOk "gcloud run services update-traffic $ServiceName --to-latest"
+function Set-QuoteServiceTrafficToLatestReady {
+    param([string]$Label)
+    $ready = (gcloud run services describe $ServiceName `
+        --project $PROJECT --region $REGION `
+        --format "value(status.latestReadyRevisionName)" 2>$null).Trim()
+    $created = (gcloud run services describe $ServiceName `
+        --project $PROJECT --region $REGION `
+        --format "value(status.latestCreatedRevisionName)" 2>$null).Trim()
+    if (-not $ready) {
+        Write-Host "  No ready revision; skip traffic update ($Label)" -ForegroundColor Yellow
+        return
+    }
+    Write-Host "  Route 100% to ready revision ($Label): $ready (latest created: $created)" -ForegroundColor DarkGray
+    gcloud run services update-traffic $ServiceName `
+        --project $PROJECT `
+        --region $REGION `
+        --to-revisions "${ready}=100" `
+        --quiet
+    Assert-GcloudOk "gcloud run services update-traffic $ServiceName --to-revisions ${ready}=100 ($Label)"
+}
+
+# Do not use --to-latest when LATEST is a failed revision (not Ready); pin to latestReadyRevisionName.
+Set-QuoteServiceTrafficToLatestReady -Label "pre-deploy"
 
 Push-Location $staging
 try {
@@ -298,12 +314,7 @@ try {
     Pop-Location
 }
 
-gcloud run services update-traffic $ServiceName `
-    --project $PROJECT `
-    --region $REGION `
-    --to-latest `
-    --quiet
-Assert-GcloudOk "gcloud run services update-traffic $ServiceName --to-latest (post-deploy)"
+Set-QuoteServiceTrafficToLatestReady -Label "post-deploy"
 
 gcloud run services add-iam-policy-binding $ServiceName `
     --project $PROJECT `
