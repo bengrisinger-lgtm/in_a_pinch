@@ -4,7 +4,10 @@ Uses pool **`iap-cloud-agent-1`**, provider **`github`**, project **`securedback
 
 ## After creating the pool (you did this)
 
-### 1. Service account IAM (one-time) — PowerShell
+### 1. Service account IAM (one-time) — PowerShell or Terraform
+
+**Full permission matrix (why each role exists):** [IAP-GITHUB-DEPLOY-SA-IAM.md](./IAP-GITHUB-DEPLOY-SA-IAM.md)  
+**Terraform:** `infra/github-wif-deploy-sa.tf` (same grants as bootstrap script)
 
 **Run once as project owner** (GrizzTeam PC). This is what makes **GitHub Actions** work — not `deploy.ps1`.
 

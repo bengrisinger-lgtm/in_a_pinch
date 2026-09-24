@@ -15,12 +15,15 @@ Write-Host "Project: $Project"
 Write-Host "Deploy SA: $DeploySa"
 Write-Host "Runtime SA (Cloud Run identity): $RuntimeSa"
 
+# Must match docs/IAP-GITHUB-DEPLOY-SA-IAM.md and Google Cloud Run --source docs.
 $ProjectRoles = @(
+  "roles/run.sourceDeveloper",
   "roles/run.admin",
+  "roles/serviceusage.serviceUsageConsumer",
   "roles/cloudbuild.builds.editor",
   "roles/cloudsql.client",
   "roles/artifactregistry.writer",
-  "roles/serviceusage.serviceUsageConsumer"
+  "roles/storage.bucketViewer"
 )
 
 function Invoke-GcloudOk {
@@ -91,7 +94,12 @@ foreach ($Bucket in @($HubBucket, $ApexBucket)) {
 }
 
 Write-Host "`n=== Verify deploy SA project roles ===" -ForegroundColor Cyan
-$Need = @("roles/run.admin", "roles/cloudbuild.builds.editor")
+$Need = @(
+  "roles/run.sourceDeveloper",
+  "roles/run.admin",
+  "roles/cloudbuild.builds.editor",
+  "roles/serviceusage.serviceUsageConsumer"
+)
 $PolicyJson = gcloud projects get-iam-policy $Project --format=json | ConvertFrom-Json
 $Granted = @()
 foreach ($b in $PolicyJson.bindings) {
