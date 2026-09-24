@@ -160,6 +160,7 @@ CATALOG_MEDIA_BUCKETS="${CATALOG_MEDIA_BUCKETS:-$DEFAULT_BUCKETS}"
   echo "DB_USER: \"$SQL_USER\""
   echo "DB_NAME: \"$SQL_DATABASE\""
   echo "DB_HOST: \"$SQL_CONNECTION_NAME\""
+  echo "RESOURCE_PREFIX: \"$PREFIX\""
   echo "ALLOWED_ORIGINS: \"$ALLOWED_ORIGINS\""
   echo "TENANT_ID: \"$TENANT_ID\""
   echo "CALENDAR_TIMEZONE: \"America/Denver\""
@@ -197,7 +198,7 @@ echo "=== gcloud run deploy $SERVICE_NAME ==="
     --vpc-egress private-ranges-only \
     --add-cloudsql-instances "$SQL_CONNECTION_NAME" \
     --env-vars-file env.yaml \
-    --set-secrets "HMAC_SECRET=${HMAC_SECRET_NAME}:latest,DB_PASSWORD=RUNTIME_DB_PASSWORD:latest" \
+    --set-secrets "HMAC_SECRET=${HMAC_SECRET_NAME}:latest,DB_PASSWORD=RUNTIME_DB_PASSWORD:latest,ADMIN_DB_PASSWORD=ADMIN_DB_PASSWORD:latest" \
     --memory 512Mi \
     --cpu 1 \
     --min-instances 0 \

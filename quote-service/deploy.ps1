@@ -224,6 +224,7 @@ Write-Utf8NoBom $envYamlPath @"
 DB_USER: "$SQL_USER"
 DB_NAME: "$SQL_DATABASE"
 DB_HOST: "$SQL_CONNECTION_NAME"
+RESOURCE_PREFIX: "$PREFIX"
 ALLOWED_ORIGINS: "$AllowedOrigins"
 TENANT_ID: "$TenantId"
 CALENDAR_TIMEZONE: "America/Denver"
@@ -278,7 +279,7 @@ try {
         --vpc-egress private-ranges-only `
         --add-cloudsql-instances $SQL_CONNECTION_NAME `
         --env-vars-file env.yaml `
-        --set-secrets "HMAC_SECRET=${HMAC_SECRET_NAME}:latest,DB_PASSWORD=RUNTIME_DB_PASSWORD:latest" `
+        --set-secrets "HMAC_SECRET=${HMAC_SECRET_NAME}:latest,DB_PASSWORD=RUNTIME_DB_PASSWORD:latest,ADMIN_DB_PASSWORD=ADMIN_DB_PASSWORD:latest" `
         --memory 512Mi `
         --cpu 1 `
         --min-instances 0 `

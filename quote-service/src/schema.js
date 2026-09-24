@@ -299,10 +299,55 @@ export async function extendCartHolds(db, schema, tenantId, holdIds, minutes = H
   return { ids, rows };
 }
 
-async function forceRls(db, qualified, table) {
+/** Platform console-service secureTables() uses the same policy name. */
+async function quoteStoreRlsReady(db, schemaName, tableName) {
+  const { rows } = await db.query(
+    `SELECT c.relrowsecurity AS rls, c.relforcerowsecurity AS forced
+       FROM pg_class c
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind = 'r'`,
+    [schemaName, tableName]
+  );
+  if (!rows[0]?.rls || !rows[0]?.forced) return false;
+  const policy = `tenant_isolation_${tableName}`;
+  const pol = await db.query(
+    `SELECT 1 FROM pg_policies
+      WHERE schemaname = $1 AND tablename = $2 AND policyname = $3
+      LIMIT 1`,
+    [schemaName, tableName, policy]
+  );
+  return pol.rows.length > 0;
+}
+
+async function currentRoleOwnsTable(db, schemaName, tableName) {
+  const { rows } = await db.query(
+    `SELECT pg_catalog.pg_get_userbyid(c.relowner) = current_user AS owns
+       FROM pg_class c
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind = 'r'`,
+    [schemaName, tableName]
+  );
+  // No catalog row (common in unit mocks right after CREATE TABLE IF NOT EXISTS).
+  if (!rows[0]) return true;
+  return rows[0].owns === true;
+}
+
+async function forceRls(db, qualified, tableName, schemaName) {
+  if (await quoteStoreRlsReady(db, schemaName, tableName)) {
+    return;
+  }
+  if (!(await currentRoleOwnsTable(db, schemaName, tableName))) {
+    const err = new Error(
+      `RLS setup skipped: ${qualified} is not owned by the runtime DB role. ` +
+        'After console-service migrate normalizes tenant schema ownership to the owner role, ' +
+        'quote-service must not ALTER TABLE on every request — use ddlMode dml-only on catalog paths.'
+    );
+    err.code = '42501';
+    throw err;
+  }
   await db.query(`ALTER TABLE ${qualified} ENABLE ROW LEVEL SECURITY`);
   await db.query(`ALTER TABLE ${qualified} FORCE ROW LEVEL SECURITY`);
-  const policy = `tenant_isolation_${table}`;
+  const policy = `tenant_isolation_${tableName}`;
   try {
     await db.query(`
       CREATE POLICY ${policy} ON ${qualified}
@@ -311,23 +356,70 @@ async function forceRls(db, qualified, table) {
         WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::UUID)
     `);
   } catch (err) {
-    // Hot path runs ensureQuoteTables on every inventory request. Concurrent
-    // callers must not DROP/CREATE policies — duplicate_object is OK.
     if (err.code !== '42710') throw err;
+  }
+}
+
+/** Guest catalog / checkout — DML only; platform + staff migrate own DDL. */
+export const QUOTE_DML_ONLY = { ddlMode: 'dml-only' };
+
+/** Safe on owner-owned tables when runtime has UPDATE (no ALTER / policy DDL). */
+async function runSafeDmlMaintenance(db, schema) {
+  try {
+    await db.query(
+      `UPDATE ${schema}.inventory_skus SET active = true WHERE active IS NULL`
+    );
+    await db.query(
+      `UPDATE ${schema}.inventory_units SET status = 'active' WHERE status IS NULL`
+    );
+    await db.query(
+      `UPDATE ${schema}.inventory_skus
+          SET category = 'Microphones', updated_at = now()
+        WHERE category = 'Microphone'`
+    );
+  } catch (err) {
+    if (err.code !== '42501') throw err;
   }
 }
 
 /**
  * Create quote-store tables in the HMAC tenant's schema and FORCE RLS
  * immediately. Does not CREATE SCHEMA (platform ensureTenantSchema does).
+ *
+ * @param {{ ddlMode?: 'migrate' | 'dml-only', ensureIndexes?: boolean }} [opts]
+ *   `dml-only` — resolve schema name only (no DDL). Use on guest catalog/checkout
+ *   after platform secureTables() owns tenant tables. Default `migrate` runs full
+ *   setup on staff write paths / deploy hooks.
+ *   When `ensureIndexes` is false, skip CREATE UNIQUE INDEX (23505 on legacy dupes).
  */
-export async function ensureQuoteTables(db, tenantId) {
-  const schema = qIdent(schemaNameFromTenantId(tenantId));
+export async function ensureQuoteTables(db, tenantId, opts = {}) {
+  const schemaRaw = schemaNameFromTenantId(tenantId);
+  const schema = qIdent(schemaRaw);
+  if (opts.ddlMode === 'dml-only') {
+    await runSafeDmlMaintenance(db, schema);
+    return { schema, tables: TABLES.map((t) => t.name) };
+  }
+  // After console-service secureTables() / ownership normalization, IAP product
+  // tables in t_<hex> are owned by the owner role. Runtime can DML but must not
+  // ALTER TABLE / CREATE POLICY on every request (42501 must be owner).
+  const { rows: skuTable } = await db.query(
+    `SELECT 1 FROM information_schema.tables
+      WHERE table_schema = $1 AND table_name = 'inventory_skus'`,
+    [schemaRaw]
+  );
+  if (
+    skuTable.length > 0 &&
+    !(await currentRoleOwnsTable(db, schemaRaw, 'inventory_skus'))
+  ) {
+    await runSafeDmlMaintenance(db, schema);
+    return { schema, tables: TABLES.map((t) => t.name) };
+  }
+  const ensureIndexes = opts.ensureIndexes !== false;
   for (const table of TABLES) {
     const name = qIdent(table.name);
     const qualified = `${schema}.${name}`;
     await db.query(`CREATE TABLE IF NOT EXISTS ${qualified} (${table.ddl})`);
-    await forceRls(db, qualified, name);
+    await forceRls(db, qualified, name, schemaRaw);
   }
   // §1 RECURRING: shims on upgraded DBs before any code path references the column
   // (expireStaleHolds runs immediately after ensureQuoteTables on GET /inventory/skus).
@@ -371,10 +463,6 @@ export async function ensureQuoteTables(db, tenantId) {
     `UPDATE ${schema}.inventory_units SET status = 'active' WHERE status IS NULL`
   );
   await db.query(
-    `CREATE UNIQUE INDEX IF NOT EXISTS inventory_categories_name_uidx
-        ON ${schema}.inventory_categories (tenant_id, lower(name))`
-  );
-  await db.query(
     `ALTER TABLE ${schema}.inventory_skus
         ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`
   );
@@ -392,24 +480,6 @@ export async function ensureQuoteTables(db, tenantId) {
   await db.query(
     `ALTER TABLE ${schema}.inventory_units ADD COLUMN IF NOT EXISTS stock_code TEXT`
   );
-  await db.query(
-    `CREATE UNIQUE INDEX IF NOT EXISTS inventory_units_stock_code_uidx
-        ON ${schema}.inventory_units (tenant_id, stock_code)
-      WHERE stock_code IS NOT NULL`
-  );
-  await db.query(
-    `CREATE UNIQUE INDEX IF NOT EXISTS inventory_categories_stock_prefix_uidx
-        ON ${schema}.inventory_categories (tenant_id, lower(stock_prefix))
-      WHERE stock_prefix IS NOT NULL`
-  );
-  await db.query(
-    `CREATE INDEX IF NOT EXISTS inventory_units_sku_idx ON ${schema}.inventory_units (sku_id)`
-  );
-  await db.query(
-    `CREATE INDEX IF NOT EXISTS inventory_reservations_unit_idx ON ${schema}.inventory_reservations (unit_id, starts_on, ends_on)`
-  );
-  // Existing IAP schemas were created before checkout columns. ADD IF NOT
-  // EXISTS is a no-op on a fresh CREATE TABLE that already has them.
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS fulfillment TEXT`);
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS event_type TEXT`);
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS starts_on DATE`);
@@ -426,10 +496,6 @@ export async function ensureQuoteTables(db, tenantId) {
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS payment_link_url TEXT`);
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS payment_link_id TEXT`);
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS square_order_id TEXT`);
-  await db.query(
-    `CREATE UNIQUE INDEX IF NOT EXISTS customers_tenant_email_uidx
-        ON ${schema}.customers (tenant_id, lower(email))`
-  );
   await db.query(
     `ALTER TABLE ${schema}.customers ADD COLUMN IF NOT EXISTS first_name TEXT`
   );
@@ -449,6 +515,33 @@ export async function ensureQuoteTables(db, tenantId) {
         SET first_name = name, last_name = ''
       WHERE (first_name IS NULL OR first_name = '')
         AND name IS NOT NULL`
+  );
+  if (!ensureIndexes) {
+    return { schema, tables: TABLES.map((t) => t.name) };
+  }
+  await db.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS inventory_categories_name_uidx
+        ON ${schema}.inventory_categories (tenant_id, lower(name))`
+  );
+  await db.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS inventory_units_stock_code_uidx
+        ON ${schema}.inventory_units (tenant_id, stock_code)
+      WHERE stock_code IS NOT NULL`
+  );
+  await db.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS inventory_categories_stock_prefix_uidx
+        ON ${schema}.inventory_categories (tenant_id, lower(stock_prefix))
+      WHERE stock_prefix IS NOT NULL`
+  );
+  await db.query(
+    `CREATE INDEX IF NOT EXISTS inventory_units_sku_idx ON ${schema}.inventory_units (sku_id)`
+  );
+  await db.query(
+    `CREATE INDEX IF NOT EXISTS inventory_reservations_unit_idx ON ${schema}.inventory_reservations (unit_id, starts_on, ends_on)`
+  );
+  await db.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS customers_tenant_email_uidx
+        ON ${schema}.customers (tenant_id, lower(email))`
   );
   await db.query(
     `CREATE UNIQUE INDEX IF NOT EXISTS staff_members_tenant_email_uidx

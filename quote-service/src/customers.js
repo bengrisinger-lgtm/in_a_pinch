@@ -3,7 +3,7 @@
  */
 
 import { Router } from 'express';
-import { ensureQuoteTables } from './schema.js';
+import { ensureQuoteTables, QUOTE_DML_ONLY } from './schema.js';
 import { wrapWithTenant } from './pool.js';
 import { joinDisplayName, normalizeEmail, splitDisplayName } from './names.js';
 
@@ -58,7 +58,7 @@ export function customerRoutes(ctx) {
 
   async function scoped(req) {
     const tenantId = hmacTenantId(req);
-    const { schema } = await ensureQuoteTables(pool, tenantId);
+    const { schema } = await ensureQuoteTables(pool, tenantId, QUOTE_DML_ONLY);
     return { tenantId, schema, db: wrapWithTenant(pool, tenantId) };
   }
 

@@ -46,6 +46,20 @@ function makePool() {
 
   function handle(compact, params) {
     const schema = schemaOf(compact);
+    if (compact.includes('information_schema.tables')) {
+      const schemaName = params[0];
+      const hasSkus = (skus[schemaName] || []).length > 0;
+      return { rows: hasSkus ? [{ '?column?': 1 }] : [] };
+    }
+    if (compact.includes('pg_class') && compact.includes('pg_get_userbyid')) {
+      return { rows: [{ owns: true }] };
+    }
+    if (compact.includes('pg_class') && compact.includes('relrowsecurity')) {
+      return { rows: [{ rls: true, forced: true }] };
+    }
+    if (compact.includes('FROM pg_policies')) {
+      return { rows: [{ '?column?': 1 }] };
+    }
     if (
       compact.startsWith('CREATE TABLE') ||
       compact.startsWith('ALTER TABLE') ||
