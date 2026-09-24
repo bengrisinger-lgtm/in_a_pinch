@@ -77,6 +77,25 @@ export async function quoteStoreNeedsOwnerMigrate(db, tenantId) {
   return false;
 }
 
+/**
+ * After console-service secureTables(), IAP tables in t_* are owned by the owner
+ * role. DEFAULT PRIVILEGES do not backfill existing tables — runtime needs an
+ * explicit GRANT or guest/staff SELECT returns 42501 even when §1 shims exist.
+ */
+export async function syncQuoteStoreRuntimeGrants(db, tenantId, runtimeRole) {
+  const schemaName = schemaNameFromTenantId(tenantId);
+  if (!/^t_[0-9a-f]{32}$/.test(schemaName)) {
+    throw new Error(`refusing grant sync for non-tenant schema ${schemaName}`);
+  }
+  const schema = `"${schemaName}"`;
+  await db.query(
+    `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${schema} TO ${runtimeRole}`
+  );
+  await db.query(
+    `GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA ${schema} TO ${runtimeRole}`
+  );
+}
+
 /** Run owner-role quote-store migration; ends admin pool before returning. */
 export async function runQuoteStoreStartupMigration(tenantId, runtimePool) {
   if (!tenantId) {
@@ -88,11 +107,6 @@ export async function runQuoteStoreStartupMigration(tenantId, runtimePool) {
     ? await quoteStoreNeedsOwnerMigrate(runtimePool, tenantId)
     : true;
 
-  if (!needsMigrate) {
-    console.info('quote-store startup migration skipped: §1 columns already present');
-    return;
-  }
-
   if (!process.env.ADMIN_DB_PASSWORD) {
     if (needsMigrate) {
       throw new Error(
@@ -100,8 +114,9 @@ export async function runQuoteStoreStartupMigration(tenantId, runtimePool) {
           'Redeploy with ADMIN_DB_PASSWORD + RESOURCE_PREFIX (see quote-service README).'
       );
     }
+    console.info('quote-store startup migration skipped: §1 columns already present');
     console.warn(
-      'quote-store startup migration skipped: ADMIN_DB_PASSWORD not mounted (schema already has §1 columns)'
+      'quote-store runtime grant sync skipped: ADMIN_DB_PASSWORD not mounted (42501 risk on owner-owned tables)'
     );
     return;
   }
@@ -111,23 +126,35 @@ export async function runQuoteStoreStartupMigration(tenantId, runtimePool) {
   let prefix;
   try {
     ({ pool, ownerRole, prefix } = createMigrationPool());
+    const runtimeRole = `${prefix}_app_runtime`;
     const client = await pool.connect();
     try {
       try {
         await client.query(`SET ROLE ${ownerRole}`);
       } catch (setRoleErr) {
         console.warn(
-          'quote-store SET ROLE owner failed; running migrate as admin',
+          'quote-store SET ROLE owner failed; running owner tasks as admin',
           setRoleErr.message || setRoleErr
         );
       }
-      // Column shims first; unique indexes can 23505 on legacy dupes and must not block revision.
-      await ensureQuoteTables(client, tenantId, {
-        ddlMode: 'migrate',
-        ensureIndexes: false,
+      await syncQuoteStoreRuntimeGrants(client, tenantId, runtimeRole);
+      console.info('quote-store runtime grants synced', {
+        prefix,
+        schema: schemaNameFromTenantId(tenantId),
+        runtimeRole,
       });
+
+      if (needsMigrate) {
+        // Column shims; unique indexes can 23505 on legacy dupes and must not block revision.
+        await ensureQuoteTables(client, tenantId, {
+          ddlMode: 'migrate',
+          ensureIndexes: false,
+        });
+        console.info('quote-store startup migration complete', { prefix, ownerRole });
+      } else {
+        console.info('quote-store startup migration skipped: §1 columns already present');
+      }
       await client.query('RESET ROLE').catch(() => {});
-      console.info('quote-store startup migration complete', { prefix, ownerRole });
     } finally {
       client.release();
     }
