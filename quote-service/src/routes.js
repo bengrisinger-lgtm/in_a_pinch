@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   ensureQuoteTables,
+  QUOTE_DML_ONLY,
   expireStaleHolds,
   extendQuoteHolds,
   HOLD_TTL_SIGNING_MINUTES,
@@ -123,7 +124,7 @@ export function quoteRoutes(ctx) {
 
     try {
       const schemaName = (
-        await ensureQuoteTables(pool, tenantId)
+        await ensureQuoteTables(pool, tenantId, QUOTE_DML_ONLY)
       ).schema;
       await expireStaleHolds(wrapWithTenant(pool, tenantId), schemaName, tenantId);
       const result = await withTenantTransaction(pool, tenantId, async (client) => {
