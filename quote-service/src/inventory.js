@@ -379,11 +379,7 @@ export function inventoryRoutes(ctx) {
       });
     } catch (err) {
       req.log?.error?.({ err }, 'sku list failed');
-      const body = { error: 'Failed to list skus' };
-      if (err && typeof err === 'object' && err.code) {
-        body.pg_code = err.code;
-      }
-      res.status(500).json(body);
+      res.status(500).json({ error: 'Failed to list skus' });
     }
   });
 
