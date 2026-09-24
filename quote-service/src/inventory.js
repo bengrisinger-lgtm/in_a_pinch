@@ -8,6 +8,7 @@ import { Router } from 'express';
 import {
   schemaNameFromTenantId,
   ensureQuoteTables,
+  QUOTE_DML_ONLY,
   expireStaleHolds,
   extendCartHolds,
   HOLD_TTL_CART_MINUTES,
@@ -331,7 +332,7 @@ export function inventoryRoutes(ctx) {
       }
     }
     try {
-      const { tenantId, schema, db } = await scoped(pool, req, { ensureIndexes: false });
+      const { tenantId, schema, db } = await scoped(pool, req, QUOTE_DML_ONLY);
       await expireStaleHolds(db, schema, tenantId);
       const { rows } = await db.query(
         `SELECT s.id, s.name, s.category, s.description, s.image_url, s.daily_rate, s.active, s.created_at,
@@ -663,7 +664,7 @@ export function inventoryRoutes(ctx) {
       return res.status(400).json({ error: 'date range is too long' });
     }
     try {
-      const { schema, db } = await scoped(pool, req, { ensureIndexes: false });
+      const { schema, db } = await scoped(pool, req, QUOTE_DML_ONLY);
       const sku = await db.query(
         `SELECT id, name FROM ${schema}.inventory_skus WHERE id = $1 AND tenant_id = $2`,
         [skuId, tenantId]
@@ -719,7 +720,7 @@ export function inventoryRoutes(ctx) {
     const monthStart = isoDay(year, month - 1, 1);
     const monthEnd = isoDay(year, month, 0);
     try {
-      const { schema, db } = await scoped(pool, req, { ensureIndexes: false });
+      const { schema, db } = await scoped(pool, req, QUOTE_DML_ONLY);
       await expireStaleHolds(db, schema, tenantId);
       const sku = await db.query(
         `SELECT id, name FROM ${schema}.inventory_skus WHERE id = $1 AND tenant_id = $2`,
@@ -823,7 +824,7 @@ export function inventoryRoutes(ctx) {
     }
 
     try {
-      const { schema, db } = await scoped(pool, req, { ensureIndexes: false });
+      const { schema, db } = await scoped(pool, req, QUOTE_DML_ONLY);
       await expireStaleHolds(db, schema, tenantId);
       const created = await withTenantTransaction(pool, tenantId, async (client) => {
         let targets = [];
@@ -942,7 +943,7 @@ export function inventoryRoutes(ctx) {
       return res.status(400).json({ error: 'hold_ids are required (1-50)' });
     }
     try {
-      const { schema, db } = await scoped(pool, req, { ensureIndexes: false });
+      const { schema, db } = await scoped(pool, req, QUOTE_DML_ONLY);
       const { ids, rows } = await extendCartHolds(db, schema, tenantId, holdIds, HOLD_TTL_CART_MINUTES);
       if (rows.length !== ids.length) {
         return res.status(409).json({
@@ -998,7 +999,7 @@ export function inventoryRoutes(ctx) {
       return res.status(400).json({ error: 'holdId must be a UUID' });
     }
     try {
-      const { schema, db } = await scoped(pool, req, { ensureIndexes: false });
+      const { schema, db } = await scoped(pool, req, QUOTE_DML_ONLY);
       const { rows } = await db.query(
         `UPDATE ${schema}.inventory_reservations
             SET status = 'cancelled'
