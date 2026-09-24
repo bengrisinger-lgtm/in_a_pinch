@@ -228,7 +228,7 @@ export const HOLD_TTL_UNPAID_SIGNED_MINUTES = 1440;
 /** @deprecated use HOLD_TTL_CART_MINUTES — kept so old tests/imports fail loudly */
 export const HOLD_TTL_HOURS = HOLD_TTL_CART_MINUTES / 60;
 
-async function tenantTableHasColumn(db, schemaName, tableName, columnName) {
+export async function tenantTableHasColumn(db, schemaName, tableName, columnName) {
   const { rows } = await db.query(
     `SELECT 1 FROM information_schema.columns
       WHERE table_schema = $1 AND table_name = $2 AND column_name = $3
@@ -236,6 +236,34 @@ async function tenantTableHasColumn(db, schemaName, tableName, columnName) {
     [schemaName, tableName, columnName]
   );
   return rows.length > 0;
+}
+
+/**
+ * Availability SQL fragment for inventory_reservations (alias `r`).
+ * §1: do not reference held_until until owner migrate added the column.
+ */
+export async function reservationBlockingClause(db, schemaName) {
+  if (await tenantTableHasColumn(db, schemaName, 'inventory_reservations', 'held_until')) {
+    return `(r.status = 'confirmed' OR (r.status = 'held' AND r.held_until > now()))`;
+  }
+  return `(r.status = 'confirmed' OR r.status = 'held')`;
+}
+
+/** SELECT list for GET /inventory/skus — omit missing §1 columns without 42703. */
+export async function skuCatalogSelectProjection(db, schemaName) {
+  const parts = ['s.id', 's.name', 's.category'];
+  if (await tenantTableHasColumn(db, schemaName, 'inventory_skus', 'description')) {
+    parts.push('s.description');
+  } else {
+    parts.push('NULL::text AS description');
+  }
+  if (await tenantTableHasColumn(db, schemaName, 'inventory_skus', 'image_url')) {
+    parts.push('s.image_url');
+  } else {
+    parts.push('NULL::text AS image_url');
+  }
+  parts.push('s.daily_rate', 's.active', 's.created_at');
+  return parts.join(', ');
 }
 
 /** Guest catalog runs DML-only; shims need owner startup migrate. Do not 500 on missing columns. */
