@@ -23,6 +23,7 @@ That grants **`iap-cloud-agent-deploy@securedbackend-production.iam.gserviceacco
 | **Runtime SA** `backend-backend-sa@…` | `iam.serviceAccountUser` for deploy SA |
 | **Secrets** `quote-service-hmac`, `REGISTRATION_KEY`, `RUNTIME_DB_PASSWORD` | `secretAccessor`; `secretVersionManager` on `quote-service-hmac` |
 | **IAP buckets** | `storage.objectAdmin` on hub + apex tenant buckets |
+| **Cloud Run source staging** | `storage.admin` on **`gs://run-sources-{project}-us-central1`** (only this bucket — `gcloud run deploy --source` needs `storage.buckets.get`) |
 
 **Typical Actions error if step 1 was skipped:** `Permission 'run.services.get' denied` on `quote-service` — fixed by **`roles/run.admin`** above.
 

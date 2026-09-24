@@ -64,6 +64,18 @@ gcloud secrets add-iam-policy-binding quote-service-hmac `
   --role="roles/secretmanager.secretVersionManager" `
   --quiet | Out-Null
 
+$Region = "us-central1"
+$RunSourcesBucket = "run-sources-${Project}-${Region}"
+Write-Host "`n=== Cloud Run --source staging bucket ===" -ForegroundColor Cyan
+Write-Host "  storage.admin: gs://$RunSourcesBucket (required for gcloud run deploy --source)"
+gcloud storage buckets add-iam-policy-binding "gs://$RunSourcesBucket" `
+  --member=$Member `
+  --role="roles/storage.admin" `
+  --quiet 2>$null
+if ($LASTEXITCODE -ne 0) {
+  Write-Host "    WARN: could not bind $RunSourcesBucket (create on first run deploy or check bucket name/region)" -ForegroundColor Yellow
+}
+
 $HubBucket = "${Project}-ta-${IapTenantSlug}-hub-app"
 $ApexBucket = "${Project}-ta-${IapTenantSlug}-coming-soon-app"
 Write-Host "`n=== Storefront GCS buckets ===" -ForegroundColor Cyan
