@@ -299,6 +299,20 @@ export async function extendCartHolds(db, schema, tenantId, holdIds, minutes = H
   return { ids, rows };
 }
 
+/** Hot-path DDL must not brick catalog on duplicate rows or racey index builds. */
+async function ensureOptionalIndex(db, sql) {
+  try {
+    await db.query(sql);
+  } catch (err) {
+    // 23505: unique index cannot be built (duplicate keys in existing rows)
+    // 42P07: relation already exists (race)
+    if (err.code === '23505' || err.code === '42P07') {
+      return;
+    }
+    throw err;
+  }
+}
+
 async function forceRls(db, qualified, table) {
   await db.query(`ALTER TABLE ${qualified} ENABLE ROW LEVEL SECURITY`);
   await db.query(`ALTER TABLE ${qualified} FORCE ROW LEVEL SECURITY`);
@@ -323,6 +337,14 @@ async function forceRls(db, qualified, table) {
  */
 export async function ensureQuoteTables(db, tenantId) {
   const schema = qIdent(schemaNameFromTenantId(tenantId));
+  try {
+    await db.query(`CREATE SCHEMA IF NOT EXISTS ${schema}`);
+  } catch (err) {
+    // Runtime role may lack CREATE on database; schema should exist from POST /auth/services.
+    if (err.code !== '42501' && err.code !== '3F000') {
+      throw err;
+    }
+  }
   for (const table of TABLES) {
     const name = qIdent(table.name);
     const qualified = `${schema}.${name}`;
@@ -344,6 +366,34 @@ export async function ensureQuoteTables(db, tenantId) {
     `ALTER TABLE ${schema}.inventory_reservations ADD COLUMN IF NOT EXISTS load_out_time TIME`
   );
   await db.query(
+    `ALTER TABLE ${schema}.inventory_reservations ADD COLUMN IF NOT EXISTS sku_id UUID`
+  );
+  await db.query(
+    `ALTER TABLE ${schema}.inventory_reservations ADD COLUMN IF NOT EXISTS unit_id UUID`
+  );
+  await db.query(
+    `ALTER TABLE ${schema}.inventory_reservations ADD COLUMN IF NOT EXISTS starts_on DATE`
+  );
+  await db.query(
+    `ALTER TABLE ${schema}.inventory_reservations ADD COLUMN IF NOT EXISTS ends_on DATE`
+  );
+  await db.query(
+    `ALTER TABLE ${schema}.inventory_reservations ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'held'`
+  );
+  await db.query(
+    `ALTER TABLE ${schema}.inventory_skus ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT true`
+  );
+  await db.query(
+    `UPDATE ${schema}.inventory_skus SET active = true WHERE active IS NULL`
+  );
+  await db.query(
+    `ALTER TABLE ${schema}.inventory_units ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active'`
+  );
+  await db.query(
+    `UPDATE ${schema}.inventory_units SET status = 'active' WHERE status IS NULL`
+  );
+  await ensureOptionalIndex(
+    db,
     `CREATE UNIQUE INDEX IF NOT EXISTS inventory_categories_name_uidx
         ON ${schema}.inventory_categories (tenant_id, lower(name))`
   );
@@ -365,20 +415,24 @@ export async function ensureQuoteTables(db, tenantId) {
   await db.query(
     `ALTER TABLE ${schema}.inventory_units ADD COLUMN IF NOT EXISTS stock_code TEXT`
   );
-  await db.query(
+  await ensureOptionalIndex(
+    db,
     `CREATE UNIQUE INDEX IF NOT EXISTS inventory_units_stock_code_uidx
         ON ${schema}.inventory_units (tenant_id, stock_code)
       WHERE stock_code IS NOT NULL`
   );
-  await db.query(
+  await ensureOptionalIndex(
+    db,
     `CREATE UNIQUE INDEX IF NOT EXISTS inventory_categories_stock_prefix_uidx
         ON ${schema}.inventory_categories (tenant_id, lower(stock_prefix))
       WHERE stock_prefix IS NOT NULL`
   );
-  await db.query(
+  await ensureOptionalIndex(
+    db,
     `CREATE INDEX IF NOT EXISTS inventory_units_sku_idx ON ${schema}.inventory_units (sku_id)`
   );
-  await db.query(
+  await ensureOptionalIndex(
+    db,
     `CREATE INDEX IF NOT EXISTS inventory_reservations_unit_idx ON ${schema}.inventory_reservations (unit_id, starts_on, ends_on)`
   );
   // Existing IAP schemas were created before checkout columns. ADD IF NOT
@@ -399,7 +453,8 @@ export async function ensureQuoteTables(db, tenantId) {
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS payment_link_url TEXT`);
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS payment_link_id TEXT`);
   await db.query(`ALTER TABLE ${schema}.quotes ADD COLUMN IF NOT EXISTS square_order_id TEXT`);
-  await db.query(
+  await ensureOptionalIndex(
+    db,
     `CREATE UNIQUE INDEX IF NOT EXISTS customers_tenant_email_uidx
         ON ${schema}.customers (tenant_id, lower(email))`
   );
@@ -423,11 +478,13 @@ export async function ensureQuoteTables(db, tenantId) {
       WHERE (first_name IS NULL OR first_name = '')
         AND name IS NOT NULL`
   );
-  await db.query(
+  await ensureOptionalIndex(
+    db,
     `CREATE UNIQUE INDEX IF NOT EXISTS staff_members_tenant_email_uidx
         ON ${schema}.staff_members (tenant_id, lower(email))`
   );
-  await db.query(
+  await ensureOptionalIndex(
+    db,
     `CREATE UNIQUE INDEX IF NOT EXISTS staff_profile_field_defs_key_uidx
         ON ${schema}.staff_profile_field_defs (tenant_id, field_key)`
   );
