@@ -23,21 +23,28 @@ $ProjectRoles = @(
   "roles/serviceusage.serviceUsageConsumer"
 )
 
+function Invoke-GcloudOk {
+  param([string[]]$Args, [string]$Label)
+  & gcloud @Args
+  if ($LASTEXITCODE -ne 0) {
+    throw "gcloud failed: $Label (exit $LASTEXITCODE)"
+  }
+}
+
 Write-Host "`n=== Project IAM (Cloud Run deploy from source) ===" -ForegroundColor Cyan
 foreach ($Role in $ProjectRoles) {
   Write-Host "  + $Role"
-  gcloud projects add-iam-policy-binding $Project `
-    --member=$Member `
-    --role=$Role `
-    --quiet | Out-Null
+  Invoke-GcloudOk @(
+    "projects", "add-iam-policy-binding", $Project,
+    "--member=$Member", "--role=$Role"
+  ) "projects add-iam-policy-binding $Role"
 }
 
 Write-Host "`n=== Deploy SA may act as runtime Cloud Run SA ===" -ForegroundColor Cyan
-gcloud iam service-accounts add-iam-policy-binding $RuntimeSa `
-  --project=$Project `
-  --member=$Member `
-  --role="roles/iam.serviceAccountUser" `
-  --quiet | Out-Null
+Invoke-GcloudOk @(
+  "iam", "service-accounts", "add-iam-policy-binding", $RuntimeSa,
+  "--project=$Project", "--member=$Member", "--role=roles/iam.serviceAccountUser"
+) "serviceAccountUser on $RuntimeSa"
 
 $Secrets = @("quote-service-hmac", "REGISTRATION_KEY", "RUNTIME_DB_PASSWORD")
 Write-Host "`n=== Secret Manager (existing secrets only) ===" -ForegroundColor Cyan
@@ -67,6 +74,22 @@ foreach ($Bucket in @($HubBucket, $ApexBucket)) {
     --quiet 2>$null
   if ($LASTEXITCODE -ne 0) {
     Write-Host "    (skip or create bucket if missing: $Bucket)" -ForegroundColor Yellow
+  }
+}
+
+Write-Host "`n=== Verify deploy SA project roles ===" -ForegroundColor Cyan
+$Need = @("roles/run.admin", "roles/cloudbuild.builds.editor")
+$PolicyJson = gcloud projects get-iam-policy $Project --format=json | ConvertFrom-Json
+$Granted = @()
+foreach ($b in $PolicyJson.bindings) {
+  if ($b.members -contains $Member) { $Granted += $b.role }
+}
+foreach ($Role in $Need) {
+  if ($Granted -contains $Role) {
+    Write-Host "  OK  $Role" -ForegroundColor Green
+  } else {
+    Write-Host "  MISSING $Role — binding did not apply; check org policy or your project IAM admin role." -ForegroundColor Red
+    exit 1
   }
 }
 
