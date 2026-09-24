@@ -68,6 +68,23 @@ gcloud secrets add-iam-policy-binding quote-service-hmac --project="$PROJECT" \
 
 Do **not** grant project-wide `secretmanager.admin` to the deploy SA unless you accept create/delete.
 
+**Verify (PowerShell)** — run as a project owner after the bindings:
+
+```powershell
+$Project = "securedbackend-production"
+$DeploySa = "iap-cloud-agent-deploy@securedbackend-production.iam.gserviceaccount.com"
+
+gcloud secrets describe quote-service-hmac --project=$Project
+
+gcloud secrets get-iam-policy quote-service-hmac --project=$Project `
+  --format="table(bindings.role,bindings.members)"
+
+gcloud secrets versions access latest --secret=quote-service-hmac --project=$Project `
+  --impersonate-service-account=$DeploySa
+```
+
+The last command must print secret bytes (not `PERMISSION_DENIED`). If impersonation is disabled, skip it and confirm `get-iam-policy` lists `serviceAccount:$DeploySa` with `secretAccessor`.
+
 ### 2. Let GitHub impersonate the service account
 
 **IAM & Admin → Service accounts →** `iap-cloud-agent-deploy` → **Permissions** → **Grant access**
