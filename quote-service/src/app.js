@@ -29,6 +29,7 @@ export function createApp({ pool, verify, expectedTenantId, allowedOrigins = [],
         }
       },
       credentials: true,
+      allowedHeaders: ['Content-Type', 'Accept', 'X-CSRF-Token', 'X-SymlaVault-Client'],
     })(req, res, next);
   });
   app.use((req, res, next) => {

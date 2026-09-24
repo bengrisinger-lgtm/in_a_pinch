@@ -2,6 +2,10 @@
 
 Platform-wide recurring patterns: **`symlfy-baas/RECURRING-BUG-CLASSES.md`**. Feature IDs: [IAP-FEATURE-INDEX.md](../IAP-FEATURE-INDEX.md).
 
+## 2026-09-24 (CORS)
+
+- **Apex console evidence:** Browser preflight to `api.inapinchav.com/api/v1/auth/validate` fails because `Access-Control-Allow-Headers` omits **`X-SymlaVault-Client`** (SDK `transport.ts` sends it on every fetch). Live OPTIONS response only lists `Content-Type,Accept,Authorization,X-CSRF-Token,Range`. **Fix:** platform **`api-gateway`** (+ auth-service parity) — deploy **`symlfy-baas`**, not quote-service.
+
 ## 2026-09-24
 
 - **Post–Option 1 SKU 500:** If startup migrate did not run (missing `ADMIN_DB_PASSWORD` / wrong `RESOURCE_PREFIX`) or revision failed on unique-index **23505**, guest catalog still 500'd — often **`expireStaleHolds`** referencing missing `quote_id` / `held_until`. Fix: derive prefix from `DB_USER`, fail startup when shims missing without admin, skip hold maintenance when columns absent, startup migrate with `ensureIndexes: false`.
