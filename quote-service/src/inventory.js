@@ -347,7 +347,9 @@ export function inventoryRoutes(ctx) {
     }
     try {
       const { tenantId, schema, schemaName, blocking, db } = await scoped(pool, req, QUOTE_DML_ONLY);
-      await expireStaleHolds(db, schema, tenantId);
+      if (isStaffIdentity(req?.identity)) {
+        await expireStaleHolds(db, schema, tenantId);
+      }
       const skuSelect = await skuCatalogSelectProjection(pool, schemaName);
       const { rows } = await db.query(
         `SELECT ${skuSelect},
