@@ -21,7 +21,7 @@ Your machine uses a **parent folder** layout (see `storefront/package.json`):
 3. Uses whatever `@securedbackend/sdk` **dist/** is already on disk from your platform checkout
 4. Optional: `build-console-overlay.ps1` then rsync `dist/` and `console-dist/` to GCS
 
-Remote automation must **match that layout and those steps**. Checking out `in_a_pinch` and `symlfy-baas` as siblings inside the repo root breaks `file:../../../symlfy-baas` unless paths are rewritten.
+Remote automation must **match that layout and those steps**, with one CI-only exception: a fresh `symlfy-baas` checkout has no committed `client-sdk/dist/`, and `tsc` emits `transport.js` with a `node:fs` version probe. **Deploy IAP storefront** runs `scripts/build-client-sdk-for-iap.sh`, which builds the SDK and patches `dist/transport.js` for Vite (working tree only — not committed to either repo).
 
 GitHub Actions check out **`in_a_pinch` at repo root** and **`symlfy-baas` as a sibling folder**, then `scripts/link-symlfy-sdk-for-npm.sh` rewrites the `file:` SDK path for that layout (working tree only — not committed).
 

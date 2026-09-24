@@ -32,8 +32,22 @@ if [[ "$DO_CONSOLE_OVERLAY" == "1" && "$is_landing" -eq 0 ]]; then
 fi
 
 if [[ "$DO_BUILD" == "1" ]]; then
+  BAAS="${SYMLFY_BAAS_ROOT:-}"
+  if [[ -z "$BAAS" ]]; then
+    for candidate in "$ROOT/symlfy-baas" "$ROOT/../symlfy-baas" /symlfy-baas; do
+      if [[ -f "$candidate/syml-platform/client-sdk/package.json" ]]; then
+        BAAS="$candidate"
+        break
+      fi
+    done
+  fi
+  if [[ -n "$BAAS" && -f "$BAAS/syml-platform/client-sdk/package.json" ]]; then
+    export SYMLFY_BAAS_ROOT="$BAAS"
+    bash "$ROOT/scripts/link-symlfy-sdk-for-npm.sh"
+    bash "$ROOT/scripts/build-client-sdk-for-iap.sh" "$BAAS/syml-platform/client-sdk"
+  fi
   echo "=== storefront npm test + build ==="
-  (cd "$STOREFRONT" && npm test && npm run build)
+  (cd "$STOREFRONT" && rm -f package-lock.json && npm install && npm test && npm run build)
 fi
 
 if [[ ! -f "$DIST/index.html" ]]; then

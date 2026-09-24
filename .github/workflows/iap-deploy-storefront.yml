@@ -55,6 +55,9 @@ jobs:
       - name: Verify symlfy-baas layout
         run: bash scripts/verify-symlfy-baas-layout.sh "${{ github.workspace }}/symlfy-baas"
 
+      - name: Build client-sdk for browser (Vite)
+        run: bash scripts/build-client-sdk-for-iap.sh "${{ github.workspace }}/symlfy-baas/syml-platform/client-sdk"
+
       - name: Link SDK for npm (repo root + sibling baas)
         env:
           SYMLFY_BAAS_ROOT: ${{ github.workspace }}/symlfy-baas

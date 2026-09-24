@@ -46,10 +46,12 @@ link_platform_sdk() {
   ln -sfn "$baas_root" /symlfy-baas
 
   local sdk_root="$baas_root/syml-platform/client-sdk"
-  # Match local deploy.ps1: storefront does not rebuild client-sdk. Only build if dist is absent.
-  if [[ ! -f "$sdk_root/dist/index.js" && -f "$sdk_root/package.json" ]]; then
-    echo "Building @securedbackend/sdk (dist/index.js missing)…"
-    (cd "$sdk_root" && npm install && npm run build)
+  if [[ -f "$sdk_root/package.json" ]]; then
+    if [[ ! -f "$sdk_root/dist/index.js" ]] \
+      || [[ -f "$sdk_root/dist/transport.js" && "$(grep -c 'node:fs' "$sdk_root/dist/transport.js" || true)" -gt 0 ]]; then
+      echo "Building @securedbackend/sdk for browser (IAP Vite)…"
+      bash "$ROOT/scripts/build-client-sdk-for-iap.sh" "$sdk_root"
+    fi
   fi
 }
 

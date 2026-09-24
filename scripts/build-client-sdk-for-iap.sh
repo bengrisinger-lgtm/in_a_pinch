@@ -30,6 +30,12 @@ fi
 echo "=== dist/ ==="
 ls -la dist/ || true
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ -f dist/transport.js ]] && grep -q 'node:fs' dist/transport.js; then
+  echo "=== patch transport.js for browser (drop node:fs version probe) ==="
+  node "$ROOT/scripts/patch-client-sdk-transport-for-browser.mjs" "$(pwd)"
+fi
+
 ENTRY=""
 if [[ -f dist/browser.js ]]; then
   ENTRY="dist/browser.js"
@@ -38,7 +44,7 @@ elif [[ -f dist/client.js ]]; then
 elif [[ -f dist/index.js ]] && ! grep -q 'node:fs' dist/transport.js 2>/dev/null; then
   ENTRY="dist/index.js"
 elif [[ -f dist/index.js ]]; then
-  echo "ERROR: dist/transport.js uses Node built-ins; client-sdk needs npm run build:browser (or fix exports.browser) in symlfy-baas." >&2
+  echo "ERROR: dist/transport.js still uses Node built-ins after browser patch." >&2
   exit 1
 else
   echo "ERROR: no dist/*.js entry after SDK build" >&2
