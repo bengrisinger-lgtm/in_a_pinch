@@ -335,6 +335,9 @@ export async function ensureQuoteTables(db, tenantId) {
     `ALTER TABLE ${schema}.inventory_reservations ADD COLUMN IF NOT EXISTS quote_id UUID`
   );
   await db.query(
+    `ALTER TABLE ${schema}.inventory_reservations ADD COLUMN IF NOT EXISTS held_until TIMESTAMPTZ`
+  );
+  await db.query(
     `ALTER TABLE ${schema}.inventory_reservations ADD COLUMN IF NOT EXISTS load_in_time TIME`
   );
   await db.query(
