@@ -4,31 +4,31 @@ Uses pool **`iap-cloud-agent-1`**, provider **`github`**, project **`securedback
 
 ## After creating the pool (you did this)
 
-### 1. Service account IAM (one-time)
+### 1. Service account IAM (one-time) — PowerShell
 
-On **`iap-cloud-agent-deploy@securedbackend-production.iam.gserviceaccount.com`**:
+**Run once as project owner** (GrizzTeam PC). This is what makes **GitHub Actions** work — not `deploy.ps1`.
 
-**Storefront (GCS rsync)**
+```powershell
+cd D:\GrizzTeam_Application\micro-applications\in-a-pinch
+.\scripts\bootstrap-iap-github-deploy-sa.ps1
+```
 
-- **Storage Object Admin** on:
-  - `securedbackend-production-ta-cadel-7414-hub-app`
-  - `securedbackend-production-ta-cadel-7414-coming-soon-app`
+That grants **`iap-cloud-agent-deploy@securedbackend-production.iam.gserviceaccount.com`**:
 
-**Quote-service (Cloud Run + register)** — required for **Deploy IAP quote-service**:
+| Scope | Roles |
+|-------|--------|
+| **Project** | `run.admin`, `cloudbuild.builds.editor`, `cloudsql.client`, `artifactregistry.writer`, `serviceusage.serviceUsageConsumer` |
+| **Runtime SA** `backend-backend-sa@…` | `iam.serviceAccountUser` for deploy SA |
+| **Secrets** `quote-service-hmac`, `REGISTRATION_KEY`, `RUNTIME_DB_PASSWORD` | `secretAccessor`; `secretVersionManager` on `quote-service-hmac` |
+| **IAP buckets** | `storage.objectAdmin` on hub + apex tenant buckets |
 
-| Role | Why |
-|------|-----|
-| `roles/run.admin` (or `run.developer` + `iam.serviceAccountUser` on runtime SA) | `gcloud run deploy`, IAM bindings |
-| `roles/cloudbuild.builds.editor` | `gcloud run deploy --source` |
-| `roles/secretmanager.secretAccessor` | On secrets **`REGISTRATION_KEY`**, **`RUNTIME_DB_PASSWORD`**, **`quote-service-hmac`** (read for deploy + register) |
-| `roles/secretmanager.secretVersionManager` | On **`quote-service-hmac` only** — if register mints a new HMAC (`versions add`). **Not** `secrets.create`. |
-| `roles/cloudsql.client` | Cloud SQL attachment on Cloud Run |
+**Typical Actions error if step 1 was skipped:** `Permission 'run.services.get' denied` on `quote-service` — fixed by **`roles/run.admin`** above.
 
-Runtime service account (`backend-backend-sa@…` from production prefix) stays the **Cloud Run identity**; the GitHub deploy SA only needs permission to deploy **as** that runtime SA (`roles/iam.serviceAccountUser` on it).
+Template for future tenants: [SYMLVAULT-CLOUD-DEPLOY-STANDARD.md](./SYMLVAULT-CLOUD-DEPLOY-STANDARD.md).
 
-You do **not** need a JSON key on your laptop when WIF is configured.
+You do **not** need a JSON key on GitHub when WIF is configured.
 
-**One-time Secret Manager bindings** (if Actions failed on `secretmanager.secrets.create` — merge PR #5 script fix, then bind **existing** secrets). Run as a **project owner**. GrizzTeam PC = **PowerShell** (not bash).
+**Manual Secret Manager only** (if you already ran project roles but not secrets):
 
 **PowerShell (copy all, paste into one session):**
 
@@ -68,22 +68,21 @@ gcloud secrets add-iam-policy-binding quote-service-hmac --project="$PROJECT" \
 
 Do **not** grant project-wide `secretmanager.admin` to the deploy SA unless you accept create/delete.
 
-**Verify (PowerShell)** — run as a project owner after the bindings:
+**Verify (PowerShell)** — after bootstrap:
 
 ```powershell
 $Project = "securedbackend-production"
 $DeploySa = "iap-cloud-agent-deploy@securedbackend-production.iam.gserviceaccount.com"
 
-gcloud secrets describe quote-service-hmac --project=$Project
+gcloud projects get-iam-policy $Project `
+  --flatten="bindings[].members" `
+  --filter="bindings.members:serviceAccount:$DeploySa" `
+  --format="table(bindings.role)"
 
-gcloud secrets get-iam-policy quote-service-hmac --project=$Project `
-  --format="table(bindings.role,bindings.members)"
-
-gcloud secrets versions access latest --secret=quote-service-hmac --project=$Project `
-  --impersonate-service-account=$DeploySa
+gcloud secrets get-iam-policy quote-service-hmac --project=$Project
 ```
 
-The last command must print secret bytes (not `PERMISSION_DENIED`). If impersonation is disabled, skip it and confirm `get-iam-policy` lists `serviceAccount:$DeploySa` with `secretAccessor`.
+Do **not** use `--impersonate-service-account` unless your user has **Service Account Token Creator** on the deploy SA; GitHub WIF does not use your user.
 
 ### 2. Let GitHub impersonate the service account
 
