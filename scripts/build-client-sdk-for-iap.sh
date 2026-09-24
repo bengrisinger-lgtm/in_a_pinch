@@ -2,6 +2,10 @@
 # Build @securedbackend/sdk for IAP Vite (browser). Default `npm run build` may emit Node transport.js.
 set -euo pipefail
 
+# Resolve repo root before cd — relative BASH_SOURCE breaks after cd into SDK_DIR.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 SDK_DIR="${1:?path to syml-platform/client-sdk}"
 cd "$SDK_DIR"
 
@@ -30,7 +34,6 @@ fi
 echo "=== dist/ ==="
 ls -la dist/ || true
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [[ -f dist/transport.js ]] && grep -q 'node:fs' dist/transport.js; then
   echo "=== patch transport.js for browser (drop node:fs version probe) ==="
   node "$ROOT/scripts/patch-client-sdk-transport-for-browser.mjs" "$(pwd)"
