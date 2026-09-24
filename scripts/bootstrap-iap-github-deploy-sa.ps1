@@ -34,9 +34,10 @@ function Invoke-GcloudOk {
 Write-Host "`n=== Project IAM (Cloud Run deploy from source) ===" -ForegroundColor Cyan
 foreach ($Role in $ProjectRoles) {
   Write-Host "  + $Role"
+  # Project has conditional storage bindings — Cloud Run roles must be unconditional.
   Invoke-GcloudOk @(
     "projects", "add-iam-policy-binding", $Project,
-    "--member=$Member", "--role=$Role"
+    "--member=$Member", "--role=$Role", "--condition=None"
   ) "projects add-iam-policy-binding $Role"
 }
 

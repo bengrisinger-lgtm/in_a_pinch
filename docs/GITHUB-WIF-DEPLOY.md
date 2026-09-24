@@ -13,6 +13,8 @@ cd D:\GrizzTeam_Application\micro-applications\in-a-pinch
 .\scripts\bootstrap-iap-github-deploy-sa.ps1
 ```
 
+If `gcloud projects add-iam-policy-binding` prompts **“specify a condition”**, this project uses conditional IAM on storage. For **Run / Cloud Build** roles choose **`None`** (option 2), or pass **`--condition=None`** on each project binding (the bootstrap script does).
+
 That grants **`iap-cloud-agent-deploy@securedbackend-production.iam.gserviceaccount.com`**:
 
 | Scope | Roles |
