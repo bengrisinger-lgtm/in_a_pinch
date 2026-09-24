@@ -1,7 +1,8 @@
 /**
- * Option 1: platform topology — owner/admin runs quote-store DDL once at
- * startup; request paths use ensureQuoteTables(..., QUOTE_DML_ONLY) only.
- * Mirrors docs-service / integrations-service createMigrationPool pattern.
+ * Quote-store DDL at startup only (platform pattern: short-lived admin pool,
+ * ended before HTTP listen — see integrations-service / sign-service index.js
+ * and syml-platform/shared/db-pools.cjs createMigrationPool).
+ * Request paths use ensureQuoteTables(..., QUOTE_DML_ONLY) only.
  */
 
 import pg from 'pg';
@@ -21,7 +22,9 @@ function createMigrationPool() {
   const user = `${prefix}_app_admin`;
   const password = process.env.ADMIN_DB_PASSWORD || process.env.DB_PASSWORD;
   if (!password) {
-    throw new Error('ADMIN_DB_PASSWORD is required for quote-store startup migration');
+    throw new Error(
+      'createMigrationPool: ADMIN_DB_PASSWORD or DB_PASSWORD env var is required'
+    );
   }
   if (!process.env.DB_NAME) {
     throw new Error('DB_NAME is required');
@@ -74,13 +77,11 @@ export async function quoteStoreNeedsOwnerMigrate(db, tenantId) {
   return false;
 }
 
-/**
- * @returns {Promise<boolean>} true if migration ran or was skipped cleanly
- */
+/** Run owner-role quote-store migration; ends admin pool before returning. */
 export async function runQuoteStoreStartupMigration(tenantId, runtimePool) {
   if (!tenantId) {
     console.warn('quote-store startup migration skipped: TENANT_ID unset');
-    return true;
+    return;
   }
 
   const needsMigrate = runtimePool
@@ -89,16 +90,15 @@ export async function runQuoteStoreStartupMigration(tenantId, runtimePool) {
 
   if (!process.env.ADMIN_DB_PASSWORD) {
     if (needsMigrate) {
-      console.error(
-        'FATAL: quote-store schema is missing §1 columns but ADMIN_DB_PASSWORD is not mounted. ' +
+      throw new Error(
+        'quote-store schema is missing §1 columns but ADMIN_DB_PASSWORD is not mounted. ' +
           'Redeploy with ADMIN_DB_PASSWORD + RESOURCE_PREFIX (see quote-service README).'
       );
-      return false;
     }
     console.warn(
       'quote-store startup migration skipped: ADMIN_DB_PASSWORD not mounted (schema already has §1 columns)'
     );
-    return true;
+    return;
   }
 
   let pool;
@@ -123,16 +123,9 @@ export async function runQuoteStoreStartupMigration(tenantId, runtimePool) {
       });
       await client.query('RESET ROLE').catch(() => {});
       console.info('quote-store startup migration complete', { prefix, ownerRole });
-      return true;
     } finally {
       client.release();
     }
-  } catch (err) {
-    console.error('quote-store startup migration failed:', {
-      code: err.code,
-      message: err.message || String(err),
-    });
-    return false;
   } finally {
     if (pool) await pool.end().catch(() => {});
   }
