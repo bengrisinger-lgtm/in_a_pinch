@@ -38,13 +38,25 @@ These match **Google’s “deploy from source” deployer account** plus what o
 
 ---
 
-## B. Deployer SA — service account user
+## B. Deployer SA — `serviceAccountUser` (actAs)
 
-| Binding | Role |
-|---------|------|
-| **`backend-backend-sa@securedbackend-production.iam.gserviceaccount.com`** (runtime SA from `production.json` `resource_prefix`) | **`roles/iam.serviceAccountUser`** |
+The deploy SA must **`iam.serviceAccounts.actAs`** every identity Cloud Run / Cloud Build uses during **`gcloud run deploy --source`**.
 
-Deploy runs Cloud Run **as** the runtime SA, not as the deploy SA.
+| Service account | Role for deploy SA | Why |
+|-----------------|-------------------|-----|
+| **`backend-backend-sa@…`** (runtime / Cloud Run identity) | `roles/iam.serviceAccountUser` | Service runs as this SA |
+| **`248381849073-compute@developer.gserviceaccount.com`** | `roles/iam.serviceAccountUser` | Default **build** SA for `--source` (error: *caller does not have permission to act as service account …104288244146164866320*) |
+| **`248381849073@cloudbuild.gserviceaccount.com`** | `roles/iam.serviceAccountUser` | Legacy Cloud Build SA (if project still uses it) |
+
+Resolve numeric ID → email:
+
+```powershell
+gcloud iam service-accounts list --project=securedbackend-production `
+  --format="table(email,uniqueId)" `
+  --filter="uniqueId=104288244146164866320"
+```
+
+Then grant **`serviceAccountUser`** on that email to **`iap-cloud-agent-deploy@…`**.
 
 ---
 
@@ -72,10 +84,15 @@ Tenant buckets may also use your existing **conditional** storage model for othe
 
 ---
 
-## E. Cloud Build default SA (often already OK)
+## E. Cloud Build default SA
 
-Google requires **`roles/run.builder`** on **`PROJECT_NUMBER-compute@developer.gserviceaccount.com`** for source builds.  
-Your project policy already lists **`248381849073-compute@developer.gserviceaccount.com`** with **`roles/run.admin`** — usually sufficient. If builds fail as Cloud Build, add **`roles/run.builder`** to that SA.
+On **`248381849073-compute@developer.gserviceaccount.com`** (project number **248381849073**):
+
+| Grant | Role | Why |
+|-------|------|-----|
+| **On the compute SA (project IAM member)** | **`roles/run.builder`** | [Cloud Run source build](https://cloud.google.com/run/docs/deploying-source-code) — build step may fail without this |
+
+Your project may already give that SA **`run.admin`**; if builds still fail, add **`run.builder`** explicitly.
 
 ---
 

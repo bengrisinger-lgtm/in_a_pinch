@@ -2,6 +2,7 @@
 # Run in PowerShell as a GCP project owner. Does NOT use desktop deploy.ps1 — this unblocks Actions.
 param(
   [string]$Project = "securedbackend-production",
+  [string]$ProjectNumber = "248381849073",
   [string]$DeploySa = "iap-cloud-agent-deploy@securedbackend-production.iam.gserviceaccount.com",
   [string]$ResourcePrefix = "backend",
   [string]$IapTenantSlug = "cadel-7414"
@@ -44,11 +45,26 @@ foreach ($Role in $ProjectRoles) {
   ) "projects add-iam-policy-binding $Role"
 }
 
-Write-Host "`n=== Deploy SA may act as runtime Cloud Run SA ===" -ForegroundColor Cyan
+$ActAsTargets = @(
+  $RuntimeSa
+  "${ProjectNumber}-compute@developer.gserviceaccount.com"
+  "${ProjectNumber}@cloudbuild.gserviceaccount.com"
+)
+Write-Host "`n=== Deploy SA may actAs runtime + Cloud Build SAs ===" -ForegroundColor Cyan
+foreach ($Target in $ActAsTargets) {
+  Write-Host "  serviceAccountUser: $Target"
+  Invoke-GcloudOk @(
+    "iam", "service-accounts", "add-iam-policy-binding", $Target,
+    "--project=$Project", "--member=$Member", "--role=roles/iam.serviceAccountUser"
+  ) "serviceAccountUser on $Target"
+}
+
+Write-Host "`n=== Cloud Build default SA: run.builder on project ===" -ForegroundColor Cyan
 Invoke-GcloudOk @(
-  "iam", "service-accounts", "add-iam-policy-binding", $RuntimeSa,
-  "--project=$Project", "--member=$Member", "--role=roles/iam.serviceAccountUser"
-) "serviceAccountUser on $RuntimeSa"
+  "projects", "add-iam-policy-binding", $Project,
+  "--member=serviceAccount:${ProjectNumber}-compute@developer.gserviceaccount.com",
+  "--role=roles/run.builder", "--condition=None"
+) "run.builder for compute default SA"
 
 $Secrets = @("quote-service-hmac", "REGISTRATION_KEY", "RUNTIME_DB_PASSWORD")
 Write-Host "`n=== Secret Manager (existing secrets only) ===" -ForegroundColor Cyan

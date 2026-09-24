@@ -26,6 +26,11 @@ variable "iap_tenant_slug" {
   default = "cadel-7414"
 }
 
+variable "project_number" {
+  type    = string
+  default = "248381849073"
+}
+
 locals {
   deploy_member = "serviceAccount:${var.deploy_sa_email}"
   project_roles = [
@@ -38,6 +43,11 @@ locals {
     "roles/storage.bucketViewer",
   ]
   deploy_secrets = toset(["quote-service-hmac", "REGISTRATION_KEY", "RUNTIME_DB_PASSWORD"])
+  act_as_sa_emails = [
+    var.runtime_sa_email,
+    "${var.project_number}-compute@developer.gserviceaccount.com",
+    "${var.project_number}@cloudbuild.gserviceaccount.com",
+  ]
 }
 
 resource "google_project_iam_member" "deploy_sa" {
@@ -47,10 +57,17 @@ resource "google_project_iam_member" "deploy_sa" {
   member   = local.deploy_member
 }
 
-resource "google_service_account_iam_member" "deploy_as_runtime" {
-  service_account_id = "projects/${var.project_id}/serviceAccounts/${var.runtime_sa_email}"
+resource "google_service_account_iam_member" "deploy_act_as" {
+  for_each           = toset(local.act_as_sa_emails)
+  service_account_id = "projects/${var.project_id}/serviceAccounts/${each.value}"
   role               = "roles/iam.serviceAccountUser"
   member             = local.deploy_member
+}
+
+resource "google_project_iam_member" "cloud_build_run_builder" {
+  project = var.project_id
+  role    = "roles/run.builder"
+  member  = "serviceAccount:${var.project_number}-compute@developer.gserviceaccount.com"
 }
 
 resource "google_secret_manager_secret_iam_member" "deploy_secret_accessor" {
