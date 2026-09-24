@@ -50,7 +50,8 @@ gcloud secrets add-iam-policy-binding quote-service-hmac `
   --role="roles/secretmanager.secretVersionManager"
 ```
 
-**bash (Linux / GitHub Actions runner only):**
+<details>
+<summary>bash (GitHub Actions / Linux only — not GrizzTeam PowerShell)</summary>
 
 ```bash
 DEPLOY_SA=iap-cloud-agent-deploy@securedbackend-production.iam.gserviceaccount.com
@@ -62,6 +63,8 @@ done
 gcloud secrets add-iam-policy-binding quote-service-hmac --project="$PROJECT" \
   --member="serviceAccount:$DEPLOY_SA" --role="roles/secretmanager.secretVersionManager"
 ```
+
+</details>
 
 Do **not** grant project-wide `secretmanager.admin` to the deploy SA unless you accept create/delete.
 
