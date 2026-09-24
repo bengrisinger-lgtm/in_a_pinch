@@ -10,7 +10,7 @@
 | Platform SDK + infra JSON | Private `symlfy-baas` checkout in CI |
 | GCP auth | **Workload Identity Federation** → **`iap-cloud-agent-deploy@…`** (no JSON keys in GitHub) |
 | Clone baas | GitHub repo secret **`SYMLFY_BAAS_GITHUB_TOKEN`** (Actions only — not Cursor) |
-| One-time GCP IAM | **`scripts/bootstrap-iap-github-deploy-sa.ps1`** (PowerShell, project owner) |
+| One-time GCP IAM | **[IAP-GITHUB-DEPLOY-SA-IAM.md](./IAP-GITHUB-DEPLOY-SA-IAM.md)** + `infra/github-wif-deploy-sa.tf` or **`scripts/bootstrap-iap-github-deploy-sa.ps1`** |
 | Spoke deploy | `gcloud run deploy --source` + stage `file:` SDK under `vendor/sdk` (RECURRING §20a) |
 | Static hub/apex | `gcloud storage rsync` to `gs://{project}-ta-{slug}-hub-app` (+ coming-soon) |
 
